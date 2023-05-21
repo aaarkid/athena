@@ -1,0 +1,87 @@
+This file allows you to use GPT for this library. This describes the whole library and can fit into one message allowing GPT to help you and teach you to use it if necessary.
+
+network.rs:
+    struct Layer
+        weights: Array2<f32>
+        biases: Array1<f32>
+        activation: Activation
+        pre_activation_output: Option<Array2<f32>>
+        inputs: Option<Array2<f32>>
+        pub fn new(input_size: usize, output_size: usize, activation: Activation) -> Self
+        pub fn with_weights(mut self, weights: Array2<f32>) -> Self
+        pub fn with_biases(mut self, biases: Array1<f32>) -> Self
+        fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32>
+        fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32>
+        fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>)
+        fn backward_minibatch(&self, inputs: ArrayView2<f32>, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array1<f32>)
+    enum Activation
+        Relu
+        Linear
+        fn apply(&self, input: &mut Array1<f32>)
+        fn apply_minibatch(&self, inputs: &mut Array2<f32>)
+        fn derivative(&self, inputs: &Array1<f32>) -> Array1<f32>
+        fn derivative_minibatch(&self, inputs: ArrayView2<f32>) -> Array2<f32>
+    struct NeuralNetwork
+        layers: Vec<Layer>
+        optimizer: OptimizerWrapper
+        pub fn new(layer_sizes: &[usize], activations: &[Activation], optimizer: OptimizerWrapper) -> Self
+        pub fn with_layers(mut self, layers: Vec<Layer>) -> Self
+        pub fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32>
+        fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32>
+        fn backward(&mut self, output_error: ArrayView1<f32>) -> Vec<(Array2<f32>, Array1<f32>)>
+        fn backward_minibatch(&mut self, output_errors: ArrayView2<f32>) -> Vec<(Array2<f32>, Array1<f32>)>
+        fn train(&mut self, input: ArrayView1<f32>, target: ArrayView1<f32>, learning_rate: f32)
+        pub fn train_minibatch(&mut self, inputs: ArrayView2<f32>, targets: ArrayView2<f32>, learning_rate: f32)
+        pub fn save(&self, path: &str) -> Result<(), Box<dyn std::error::Error>>
+        pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>>
+agent.rs:
+
+    struct DqnAgent
+        network: NeuralNetwork
+        epsilon: f32
+        rng: ThreadRng
+        pub fn new(layer_sizes: &[usize], epsilon: f32, optimizer: OptimizerWrapper) -> Self
+        pub fn new_default(state_size: usize, action_size: usize, epsilon: f32, optimizer: OptimizerWrapper) -> Self
+        fn act(&mut self, state: ArrayView1<f32>) -> usize
+        fn update_epsilon(&mut self, epsilon: f32)
+        pub fn train_on_batch(&mut self, experiences: &[&Experience], gamma: f32, learning_rate: f32)
+
+replay_buffer.rs:
+
+    struct Experience
+        state: Array1<f32>
+        action: usize
+        reward: f32
+        next_state: Array1<f32>
+        done: bool
+    struct ReplayBuffer
+        buffer: VecDeque<Experience>
+        capacity: usize
+        fn new(capacity: usize) -> Self
+        fn add(&mut self, experience: Experience)
+        fn sample(&self, batch_size: usize) -> Vec<&Experience>
+        fn len(&self) -> usize
+
+optimizer.rs:
+
+    trait Optimizer
+        fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32)
+        fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32)
+
+    struct SGD
+        fn new() -> Self
+        fn default() -> Self
+        impl Optimizer
+
+    pub struct Adam
+        beta1: f32
+        beta2: f32
+        epsilon: f32
+        m_weights: Vec<Array2<f32>>
+        v_weights: Vec<Array2<f32>>
+        m_biases: Vec<Array1<f32>>
+        v_biases: Vec<Array1<f32>>
+        t: usize
+        pub fn new(layers: &[Layer], beta1: f32, beta2: f32, epsilon: f32) -> Self
+        pub fn default(layers: &[Layer]) -> Self
+        impl Optimizer
