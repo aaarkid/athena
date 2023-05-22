@@ -10,6 +10,7 @@ network.rs:
         pub fn new(input_size: usize, output_size: usize, activation: Activation) -> Self
         pub fn with_weights(mut self, weights: Array2<f32>) -> Self
         pub fn with_biases(mut self, biases: Array1<f32>) -> Self
+        pub fn to_vector(layer_sizes: &[usize]) -> Vec<Layer>
         fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32>
         fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32>
         fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>)
@@ -59,7 +60,9 @@ replay_buffer.rs:
         capacity: usize
         fn new(capacity: usize) -> Self
         fn add(&mut self, experience: Experience)
-        fn sample(&self, batch_size: usize) -> Vec<&Experience>
+        pub fn sample(&self, batch_size: usize) -> Vec<&Experience>
+        pub fn recent(&self, batch_size: usize) -> Vec<&Experience>
+        pub fn recent_and_random(&self, batch_size: usize, recent_size: usize) -> Vec<&Experience>
         fn len(&self) -> usize
 
 optimizer.rs:

@@ -87,12 +87,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sgd_new() {
-        let sgd = SGD::new();
-        assert_eq!(sgd, SGD {});
-    }
-
-    #[test]
     fn test_sgd_update_weights() {
         let mut sgd = SGD::new();
         let mut weights = array![[1.0, 1.0], [1.0, 1.0]];

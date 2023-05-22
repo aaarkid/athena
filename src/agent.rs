@@ -1,6 +1,7 @@
 use crate::network::{Activation, NeuralNetwork};
 use crate::optimizer::{OptimizerWrapper};
 use crate::replay_buffer::Experience;
+use ndarray::parallel::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rand::{Rng, rngs::ThreadRng};
 use ndarray::{Array1, ArrayView1, Axis};
 use serde::{Serialize, Deserialize};
@@ -68,7 +69,7 @@ impl DqnAgent {
 
         let network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
 
-        println!("Layer weight shapes: {:?}", network.layers.iter().map(|layer| layer.weights.shape()).collect::<Vec<_>>());
+        // println!("Layer weight shapes: {:?}", network.layers.iter().map(|layer| layer.weights.shape()).collect::<Vec<_>>());
 
         let rng = rand::thread_rng();
 
@@ -103,13 +104,17 @@ impl DqnAgent {
 
     pub fn train_on_batch(&mut self, experiences: &[&Experience], gamma: f32, learning_rate: f32) {
         let (states, target_q_values): (Vec<_>, Vec<_>) = experiences
-            .iter()
+            .par_iter() // parallel iterator
             .map(|experience| {
                 let state = experience.state.view();
                 let next_state = experience.next_state.view();
 
-                let q_values = self.network.forward(state);
-                let next_q_values = self.network.forward(next_state);
+                // We need to clone the network for each thread.
+                // This should be done in a way that the network doesn't need to be re-initialized each time, for example by using Arc.
+                let mut thread_local_network = self.network.clone(); 
+
+                let q_values = thread_local_network.forward(state);
+                let next_q_values = thread_local_network.forward(next_state);
 
                 let mut target_q_values = q_values.clone();
                 let max_next_q_value = *next_q_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();

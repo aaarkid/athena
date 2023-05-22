@@ -9,7 +9,8 @@ pub trait Optimizer {
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone
+)]
 pub enum OptimizerWrapper {
     SGD(SGD),
     Adam(Adam),
@@ -31,7 +32,7 @@ impl Optimizer for OptimizerWrapper {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SGD;
 
 impl SGD {
@@ -55,7 +56,7 @@ impl Optimizer for SGD {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Adam {
     pub beta1: f32,
     pub beta2: f32,
