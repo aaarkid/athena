@@ -11,7 +11,7 @@ use crate::optimizer::{Optimizer, OptimizerWrapper};
 /// A Layer in a neural network, consisting of weights, biases, and an activation function.
 /// This struct represents a fully connected layer within a neural network.
 /// It contains the weights and biases for the layer as well as the activation function to be applied.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Layer {
     pub weights: Array2<f32>,
     pub biases: Array1<f32>,
@@ -46,6 +46,21 @@ impl Layer {
         assert_eq!(biases.dim(), self.biases.dim());
         self.biases = biases;
         self
+    }
+
+    pub fn to_vector(layer_sizes: &[usize]) -> Vec<Layer> {
+        let mut layers = Vec::new();
+        for i in 0..layer_sizes.len() - 1 {
+            let input_size = layer_sizes[i];
+            let output_size = layer_sizes[i + 1];
+            let layer = if i == layer_sizes.len() - 2 {
+                Layer::new(input_size, output_size, Activation::Linear)
+            } else {
+                Layer::new(input_size, output_size, Activation::Relu)
+            };
+            layers.push(layer);
+        }
+        layers
     }
 
     /// Perform a forward pass for a single input vector.
@@ -158,7 +173,7 @@ impl Activation {
 
 /// A Neural Network consisting of multiple layers, an optimizer, and methods for training
 /// and making predictions.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct NeuralNetwork {
     pub layers: Vec<Layer>,
     pub optimizer: OptimizerWrapper,
