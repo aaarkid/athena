@@ -35,11 +35,31 @@ impl ReplayBuffer {
 
     pub fn sample(&self, batch_size: usize) -> Vec<&Experience> {
         let mut rng = thread_rng();
-        let samples = self.buffer.as_slices().0;
+    
+        let (slice1, slice2) = self.buffer.as_slices();
         let mut indices = (0..self.buffer.len()).collect::<Vec<usize>>();
         indices.shuffle(&mut rng);
-        indices.truncate(batch_size);
-        indices.into_iter().map(|i| &samples[i]).collect()
+    
+        if batch_size > indices.len() {
+            // Not enough samples in the buffer yet, return all of them:
+            indices.into_iter().map(|i| {
+                if i < slice1.len() {
+                    &slice1[i]
+                } else {
+                    &slice2[i - slice1.len()]
+                }
+            }).collect()
+        } else {
+            // Enough samples in the buffer, truncate and return a batch:
+            indices.truncate(batch_size);
+            indices.into_iter().map(|i| {
+                if i < slice1.len() {
+                    &slice1[i]
+                } else {
+                    &slice2[i - slice1.len()]
+                }
+            }).collect()
+        }
     }
 
     pub fn recent(&self, batch_size: usize) -> Vec<&Experience> {
