@@ -26,7 +26,10 @@ const BATCH_SIZE: usize = 32;
 
 // Function to initialize the state of the game, which represents the positions of the player and the object.
 fn initialize_state(player_pos: usize, object_pos: usize) -> Array1<f32> {
-    Array1::from(vec![player_pos as f32 / BOARD_SIZE as f32, object_pos as f32 / BOARD_SIZE as f32])
+    let mut state = Array1::zeros(BOARD_SIZE * 2);
+    state[player_pos] = 1.0;
+    state[BOARD_SIZE + object_pos] = 1.0;
+    state
 }
 
 // Function that determines the reward and the end condition of the game.
@@ -41,7 +44,7 @@ fn game_logic(player_pos: usize, object_pos: usize) -> (f32, bool) {
 fn main() {
     let now = std::time::Instant::now();
     // Creating the Deep Q-Network (DQN) agent.
-    let layer_sizes = &[2, 10, 3];
+    let layer_sizes = &[20, 16, 3];
     // let layers = Layer::to_vector(layer_sizes);
     let optimizer = OptimizerWrapper::SGD(SGD::new());
     let mut agent = DqnAgent::new(layer_sizes, EPSILON, optimizer);
@@ -108,4 +111,29 @@ fn main() {
         println!("Total reward: {}", total_reward);
     }
     println!("Time taken: {:?}", now.elapsed());
+
+    // Do one more round of training with epsilon set to 0.
+    agent.update_epsilon(0.0);
+    player_pos = 0;
+    object_pos = (BOARD_SIZE - 3) + rand::random::<usize>() % 3;
+    state = initialize_state(player_pos, object_pos);
+    let mut done = false;
+    while !done {
+        let action = agent.act(state.view());
+        match action {
+            0 => {
+                player_pos = (player_pos as isize - 1).rem_euclid(BOARD_SIZE as isize) as usize;
+            },
+            1 => {},
+            2 => {
+                player_pos = (player_pos + 1).rem_euclid(BOARD_SIZE);
+            },
+            _ => panic!("Invalid action"),
+        }
+        object_pos = (object_pos as isize - 1).rem_euclid(BOARD_SIZE as isize) as usize;
+        let (_, end) = game_logic(player_pos, object_pos);
+        done = end;
+        state = initialize_state(player_pos, object_pos);
+        println!("Player position: {}, Object position: {}, Action: {}", player_pos, object_pos,  action);
+    }
 }
