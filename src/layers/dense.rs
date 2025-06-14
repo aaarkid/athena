@@ -4,6 +4,7 @@ use ndarray_rand::RandomExt;
 use serde::{Serialize, Deserialize};
 use crate::activations::Activation;
 use super::traits::Layer as LayerTrait;
+use super::initialization::WeightInit;
 
 /// A fully connected (dense) layer in a neural network
 #[derive(Serialize, Deserialize, Clone)]
@@ -22,6 +23,24 @@ impl DenseLayer {
     pub fn new(input_size: usize, output_size: usize, activation: Activation) -> Self {
         let weights = Array2::random((input_size, output_size), Uniform::new(-0.1, 0.1));
         let biases = Array1::zeros(output_size);
+        DenseLayer {
+            weights,
+            biases,
+            activation,
+            pre_activation_output: None,
+            inputs: None,
+        }
+    }
+    
+    /// Create a new dense layer with custom weight initialization
+    pub fn new_with_init(
+        input_size: usize, 
+        output_size: usize, 
+        activation: Activation,
+        weight_init: WeightInit
+    ) -> Self {
+        let weights = weight_init.initialize_weights((input_size, output_size));
+        let biases = weight_init.initialize_biases(output_size);
         DenseLayer {
             weights,
             biases,
