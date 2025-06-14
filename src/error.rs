@@ -77,6 +77,13 @@ impl From<bincode::Error> for AthenaError {
     }
 }
 
+// Conversion from serde_json::Error
+impl From<serde_json::Error> for AthenaError {
+    fn from(err: serde_json::Error) -> Self {
+        AthenaError::SerializationError(err.to_string())
+    }
+}
+
 // Helper functions for common error patterns
 impl AthenaError {
     pub fn dimension_mismatch<S: Into<String>>(expected: S, actual: S) -> Self {

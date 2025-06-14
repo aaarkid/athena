@@ -14,8 +14,7 @@ pub trait Optimizer {
 
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Clone
-)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum OptimizerWrapper {
     SGD(SGD),
     Adam(Adam),
@@ -40,7 +39,7 @@ impl Optimizer for OptimizerWrapper {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SGD;
 
 impl SGD {
@@ -66,7 +65,7 @@ impl Optimizer for SGD {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Adam {
     pub beta1: f32,
     pub beta2: f32,
@@ -169,7 +168,7 @@ impl Optimizer for Adam {
 
 
 /// RMSProp optimizer
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RMSProp {
     pub beta: f32,
     pub epsilon: f32,
