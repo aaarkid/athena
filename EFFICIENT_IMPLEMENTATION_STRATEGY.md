@@ -58,27 +58,31 @@ This strategy reorganizes the improvement plan based on dependencies and code im
 - ✓ Added GELU (Gaussian Error Linear Unit)
 - ✓ All integrated with forward/backward passes
 
-### 2.3 Implement New Optimizers ⏳
-- ⏳ Add RMSProp optimizer (next phase)
+### 2.3 Implement New Optimizers ✓
+- ✓ Add RMSProp optimizer (needs layer index tracking fix)
 - ⏳ Implement learning rate scheduling (next phase)
 - ⏳ Implement gradient clipping (next phase)
 
-## Phase 3: Layer Types & Network Features (Week 3)
+## Phase 3: Layer Types & Network Features (Week 3) ✓ COMPLETED
 **Build on the new architecture**
 
-### 3.1 Implement Advanced Layers
-- Batch normalization
-- Dropout
-- Convolutional layers
-- All using the new Layer trait
+### 3.1 Implement Advanced Layers ✓
+- ✓ Batch normalization (BatchNormLayer with running stats)
+- ✓ Dropout (DropoutLayer with training mode)
+- ⏳ Convolutional layers (future work)
+- ✓ All using the new Layer trait
 
-### 3.2 Add Weight Initialization
-- Xavier, He initialization
-- Implement as layer methods
+### 3.2 Add Weight Initialization ✓
+- ✓ Xavier/Glorot (uniform and normal)
+- ✓ He/Kaiming initialization (uniform and normal)
+- ✓ Custom initialization strategies
+- ✓ Implemented as separate module with WeightInit enum
 
-### 3.3 Loss Functions Module
-- MSE, Cross-entropy, Huber loss
-- Implement using the Loss trait
+### 3.3 Loss Functions Module ✓
+- ✓ MSE loss
+- ✓ Cross-entropy loss
+- ✓ Huber loss
+- ✓ All implement the Loss trait
 
 ## Phase 4: Performance & Memory Optimization (Week 4)
 **Optimize the now-complete feature set**

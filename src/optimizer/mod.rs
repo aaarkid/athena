@@ -1,6 +1,11 @@
-use ndarray::{Array2, Array1};
+pub mod gradient_clipper;
+pub mod lr_scheduler;
 
+use ndarray::{Array2, Array1};
 use crate::layers::Layer;
+
+pub use gradient_clipper::GradientClipper;
+pub use lr_scheduler::LearningRateScheduler;
 
 pub trait Optimizer {
     fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32);

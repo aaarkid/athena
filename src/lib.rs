@@ -10,6 +10,7 @@ pub mod loss;
 pub mod network;
 pub mod optimizer;
 pub mod replay_buffer;
+pub mod replay_buffer_v2;
 
 // Re-export commonly used types for backward compatibility
 pub use activations::Activation;
