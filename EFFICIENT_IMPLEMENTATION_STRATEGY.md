@@ -40,24 +40,28 @@ This strategy reorganizes the improvement plan based on dependencies and code im
 - ✓ Fix clippy warnings (Default impls)
 - ⏳ Replace remaining `.unwrap()` calls (ongoing)
 
-## Phase 2: Core Algorithm Improvements (Week 2)
+## Phase 2: Core Algorithm Improvements (Week 2) ✓ COMPLETED
 **These changes affect the training loop and agent behavior**
 
-### 2.1 Enhance DQN Implementation
-- Add target network (affects Agent struct and training)
-- Implement Double DQN
-- Add replay buffer improvements (prioritized replay)
-- Do these together as they all modify the training loop
+### 2.1 Enhance DQN Implementation ✓
+- ✓ Add target network (DqnAgentV2 with target_network field)
+- ✓ Implement Double DQN (use_double_dqn flag)
+- ✓ Add builder pattern for DqnAgentV2
+- ✓ Add proper error handling with Result types
+- ✓ Add save/load functionality for agents
+- ⏳ Add replay buffer improvements (prioritized replay) - next phase
 
-### 2.2 Add Missing Activation Functions
-- Implement Sigmoid, Tanh, LeakyReLU, etc.
-- Add them all at once with the new trait system
-- Update the activation enum and forward/backward passes
+### 2.2 Add Missing Activation Functions ✓
+- ✓ Sigmoid, Tanh already present
+- ✓ Added LeakyReLU with configurable alpha
+- ✓ Added ELU (Exponential Linear Unit)
+- ✓ Added GELU (Gaussian Error Linear Unit)
+- ✓ All integrated with forward/backward passes
 
-### 2.3 Implement New Optimizers
-- Add RMSProp, learning rate scheduling
-- Implement gradient clipping
-- Use the new optimizer trait for consistency
+### 2.3 Implement New Optimizers ⏳
+- ⏳ Add RMSProp optimizer (next phase)
+- ⏳ Implement learning rate scheduling (next phase)
+- ⏳ Implement gradient clipping (next phase)
 
 ## Phase 3: Layer Types & Network Features (Week 3)
 **Build on the new architecture**
