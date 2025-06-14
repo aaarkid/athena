@@ -28,6 +28,9 @@ pub struct DqnAgentV2 {
     /// Use Double DQN
     pub use_double_dqn: bool,
     
+    /// Number of training steps performed
+    pub train_steps: usize,
+    
     /// Random number generator
     #[serde(skip)]
     pub rng: ThreadRng,
@@ -64,6 +67,7 @@ impl DqnAgentV2 {
             target_update_freq,
             update_counter: 0,
             use_double_dqn,
+            train_steps: 0,
             rng,
         }
     }
@@ -203,6 +207,9 @@ impl DqnAgentV2 {
         let loss = (&predictions - &target_q_values).mapv(|x| x * x).mean()
             .unwrap_or(f32::INFINITY);
         
+        // Increment train steps
+        self.train_steps += 1;
+        
         // Update target network if needed
         self.update_counter += 1;
         if self.update_counter % self.target_update_freq == 0 {
@@ -231,6 +238,7 @@ impl DqnAgentV2 {
 /// Builder pattern for DqnAgentV2
 pub struct DqnAgentBuilder {
     layer_sizes: Vec<usize>,
+    activations: Option<Vec<Activation>>,
     epsilon: f32,
     optimizer: Option<OptimizerWrapper>,
     target_update_freq: usize,
@@ -241,6 +249,7 @@ impl DqnAgentBuilder {
     pub fn new() -> Self {
         DqnAgentBuilder {
             layer_sizes: vec![],
+            activations: None,
             epsilon: 1.0,
             optimizer: None,
             target_update_freq: 1000,
@@ -273,6 +282,11 @@ impl DqnAgentBuilder {
         self
     }
     
+    pub fn activations(mut self, activations: &[Activation]) -> Self {
+        self.activations = Some(activations.to_vec());
+        self
+    }
+    
     pub fn build(self) -> Result<DqnAgentV2> {
         if self.layer_sizes.len() < 2 {
             return Err(AthenaError::InvalidParameter {
@@ -286,13 +300,39 @@ impl DqnAgentBuilder {
                 name: "optimizer".to_string(),
                 reason: "Optimizer must be specified".to_string(),
             })?;
+        
+        // Use custom activations if provided
+        if let Some(activations) = self.activations {
+            if activations.len() != self.layer_sizes.len() - 1 {
+                return Err(AthenaError::InvalidParameter {
+                    name: "activations".to_string(),
+                    reason: "Number of activations must match number of layers - 1".to_string(),
+                });
+            }
             
-        Ok(DqnAgentV2::new(
-            &self.layer_sizes,
-            self.epsilon,
-            optimizer,
-            self.target_update_freq,
-            self.use_double_dqn,
-        ))
+            // Create networks with custom activations
+            let q_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer.clone());
+            let target_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer);
+            
+            Ok(DqnAgentV2 {
+                q_network,
+                target_network,
+                epsilon: self.epsilon,
+                target_update_freq: self.target_update_freq,
+                update_counter: 0,
+                use_double_dqn: self.use_double_dqn,
+                train_steps: 0,
+                rng: rand::thread_rng(),
+            })
+        } else {
+            // Use default activations
+            Ok(DqnAgentV2::new(
+                &self.layer_sizes,
+                self.epsilon,
+                optimizer,
+                self.target_update_freq,
+                self.use_double_dqn,
+            ))
+        }
     }
 }

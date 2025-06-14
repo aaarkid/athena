@@ -4,7 +4,7 @@ use std::fmt;
 pub type Result<T> = std::result::Result<T, AthenaError>;
 
 /// Main error type for Athena library
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AthenaError {
     /// Invalid dimensions for operations
     DimensionMismatch {

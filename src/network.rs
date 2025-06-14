@@ -35,6 +35,14 @@ impl NeuralNetwork {
     
         NeuralNetwork { layers, optimizer }
     }
+    
+    /// Create an empty neural network
+    pub fn new_empty() -> Self {
+        NeuralNetwork {
+            layers: vec![],
+            optimizer: OptimizerWrapper::SGD(crate::optimizer::SGD::new()),
+        }
+    }
 
     pub fn with_layers(mut self, layers: Vec<Layer>) -> Self {
         self.layers = layers;
