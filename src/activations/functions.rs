@@ -2,8 +2,9 @@ use ndarray::{Array1, Array2, ArrayView2};
 use serde::{Serialize, Deserialize};
 
 /// An enumeration of the possible activation functions that can be used in a neural network layer.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default)]
 pub enum Activation {
+    #[default]
     Relu,
     Linear,
     Sigmoid,
@@ -123,12 +124,6 @@ impl Activation {
                 inputs.mapv(|v| if v > 0.0 { 1.0 } else { a * v.exp() })
             }
         }
-    }
-}
-
-impl Default for Activation {
-    fn default() -> Self {
-        Activation::Relu
     }
 }
 

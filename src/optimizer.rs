@@ -39,9 +39,11 @@ impl SGD {
     pub fn new() -> SGD {
         SGD
     }
+}
 
-    pub fn default() -> SGD {
-        SGD
+impl Default for SGD {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -66,6 +68,8 @@ pub struct Adam {
     m_biases: Vec<Array1<f32>>,
     v_biases: Vec<Array1<f32>>,
     pub t: usize,
+    layer_count: usize,
+    update_count: usize,
 }
 
 impl Adam {
@@ -87,6 +91,8 @@ impl Adam {
             .map(|layer| Array1::<f32>::zeros(layer.biases.dim()))
             .collect();
 
+        let layer_count = layers.len();
+        
         Adam {
             beta1,
             beta2,
@@ -96,6 +102,8 @@ impl Adam {
             m_biases,
             v_biases,
             t: 1,
+            layer_count,
+            update_count: 0,
         }
     }
 
@@ -119,8 +127,13 @@ impl Optimizer for Adam {
         let v_hat = v.mapv(|x| x / (1.0 - self.beta2.powi(self.t as i32)));
 
         *weights -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
-
-        self.t += 1; // Increment the time step
+        
+        // Track updates per layer
+        self.update_count += 1;
+        if self.update_count >= self.layer_count * 2 {
+            self.t += 1;
+            self.update_count = 0;
+        }
     }
 
     fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
@@ -136,7 +149,12 @@ impl Optimizer for Adam {
         let v_hat = v.mapv(|x| x / (1.0 - self.beta2.powi(self.t as i32)));
 
         *biases -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
-
-        self.t += 1; // Increment the time step
+        
+        // Track updates per layer  
+        self.update_count += 1;
+        if self.update_count >= self.layer_count * 2 {
+            self.t += 1;
+            self.update_count = 0;
+        }
     }
 }
