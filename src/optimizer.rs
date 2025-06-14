@@ -1,6 +1,6 @@
 use ndarray::{Array2, Array1};
 
-use crate::network::Layer;
+use crate::layers::Layer;
 
 pub trait Optimizer {
     fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32);
