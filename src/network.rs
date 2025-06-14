@@ -54,7 +54,7 @@ impl NeuralNetwork {
     /// Perform a forward pass for a batch of input vectors.
     /// This function computes the output of the neural network for each input vector in the batch
     /// by successively applying each layer's forward_minibatch function.
-    fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
+    pub fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
         let mut current_output = inputs.to_owned();
         for layer in &mut self.layers {
             current_output = layer.forward_minibatch(current_output.view());

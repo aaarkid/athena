@@ -11,6 +11,7 @@ pub enum Activation {
     Tanh,
     LeakyRelu { alpha: f32 },
     Elu { alpha: f32 },
+    Gelu,
 }
 
 impl Activation {
@@ -35,6 +36,10 @@ impl Activation {
                 let a = *alpha;
                 input.mapv_inplace(|v| if v > 0.0 { v } else { a * (v.exp() - 1.0) });
             }
+            Activation::Gelu => {
+                use super::gelu::Gelu;
+                Gelu::apply(input);
+            }
         }
     }
     
@@ -58,6 +63,10 @@ impl Activation {
             Activation::Elu { alpha } => {
                 let a = *alpha;
                 inputs.mapv_inplace(|v| if v > 0.0 { v } else { a * (v.exp() - 1.0) });
+            }
+            Activation::Gelu => {
+                use super::gelu::Gelu;
+                Gelu::apply_batch(inputs);
             }
         }
     }
@@ -91,6 +100,10 @@ impl Activation {
                 let a = *alpha;
                 input.mapv(|v| if v > 0.0 { 1.0 } else { a * v.exp() })
             }
+            Activation::Gelu => {
+                use super::gelu::Gelu;
+                Gelu::derivative(input)
+            }
         }
     }
 
@@ -122,6 +135,10 @@ impl Activation {
             Activation::Elu { alpha } => {
                 let a = *alpha;
                 inputs.mapv(|v| if v > 0.0 { 1.0 } else { a * v.exp() })
+            }
+            Activation::Gelu => {
+                use super::gelu::Gelu;
+                Gelu::derivative_batch(inputs)
             }
         }
     }
