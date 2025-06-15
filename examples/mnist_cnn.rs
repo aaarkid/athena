@@ -9,13 +9,26 @@
 use athena::network::NeuralNetwork;
 use athena::layers::{Layer, Conv2DLayer, MaxPool2DLayer, GlobalAvgPoolLayer, BatchNormLayer, DropoutLayer};
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, Adam};
+use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::metrics::MetricsTracker;
-use ndarray::{Array1, Array2, Array3, Array4, Axis, s};
+use ndarray::{Array1, Array2, Array3, Array4, ArrayView1, ArrayView4, Axis, s};
 use rand::seq::SliceRandom;
 use rand::Rng;
 use std::fs::File;
 use std::io::{Read, Write};
+
+/// Helper function to find argmax of an array
+fn argmax(arr: ArrayView1<f32>) -> usize {
+    let mut max_idx = 0;
+    let mut max_val = arr[0];
+    for (i, &val) in arr.iter().enumerate().skip(1) {
+        if val > max_val {
+            max_val = val;
+            max_idx = i;
+        }
+    }
+    max_idx
+}
 
 /// CNN architecture for MNIST
 struct ConvNet {
@@ -45,17 +58,17 @@ impl ConvNet {
     fn new() -> Self {
         // Layer 1: Conv(1->32, 3x3) -> BN -> ReLU -> MaxPool(2x2)
         let conv1 = Conv2DLayer::new(1, 32, (3, 3), (1, 1), (1, 1), Activation::Relu);
-        let bn1 = BatchNormLayer::new(32);
+        let bn1 = BatchNormLayer::new(32, 0.9, 1e-5);
         let pool1 = MaxPool2DLayer::new((2, 2), None);
         
         // Layer 2: Conv(32->64, 3x3) -> BN -> ReLU -> MaxPool(2x2)
         let conv2 = Conv2DLayer::new(32, 64, (3, 3), (1, 1), (1, 1), Activation::Relu);
-        let bn2 = BatchNormLayer::new(64);
+        let bn2 = BatchNormLayer::new(64, 0.9, 1e-5);
         let pool2 = MaxPool2DLayer::new((2, 2), None);
         
         // Layer 3: Conv(64->128, 3x3) -> BN -> ReLU -> GlobalAvgPool
         let conv3 = Conv2DLayer::new(64, 128, (3, 3), (1, 1), (1, 1), Activation::Relu);
-        let bn3 = BatchNormLayer::new(128);
+        let bn3 = BatchNormLayer::new(128, 0.9, 1e-5);
         let global_pool = GlobalAvgPoolLayer::new();
         
         // Fully connected layers
@@ -114,7 +127,11 @@ impl ConvNet {
 }
 
 /// Extension to BatchNormLayer for 4D inputs
-impl BatchNormLayer {
+trait BatchNormExt {
+    fn forward_batch_4d(&mut self, input: ArrayView4<f32>, training: bool) -> Array4<f32>;
+}
+
+impl BatchNormExt for BatchNormLayer {
     fn forward_batch_4d(&mut self, input: ArrayView4<f32>, training: bool) -> Array4<f32> {
         let (batch_size, channels, height, width) = input.dim();
         let old_training = self.training;
@@ -166,7 +183,7 @@ fn augment_image(image: &Array2<f32>, rng: &mut impl Rng) -> Array2<f32> {
 }
 
 /// Simple image rotation (placeholder - real implementation would use proper interpolation)
-fn rotate_image(image: &Array2<f32>, angle: f32) -> Array2<f32> {
+fn rotate_image(image: &Array2<f32>, _angle: f32) -> Array2<f32> {
     // Simplified - in practice use proper rotation matrix and interpolation
     image.clone()
 }
@@ -188,7 +205,7 @@ fn shift_image(image: &Array2<f32>, shift_x: i32, shift_y: i32) -> Array2<f32> {
 }
 
 /// Simple image zoom
-fn zoom_image(image: &Array2<f32>, zoom: f32) -> Array2<f32> {
+fn zoom_image(image: &Array2<f32>, _zoom: f32) -> Array2<f32> {
     // Simplified - in practice use proper interpolation
     image.clone()
 }
@@ -288,7 +305,7 @@ fn draw_random_pattern(image: &mut ndarray::ArrayViewMut2<f32>, seed: usize) {
     let mut rng = rand::thread_rng();
     
     // Draw some random lines based on seed
-    for i in 0..seed {
+    for _i in 0..seed {
         let x1 = rng.gen_range(5..23);
         let y1 = rng.gen_range(5..23);
         let x2 = rng.gen_range(5..23);
@@ -316,7 +333,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch_size = 32;
     let epochs = 10;
     let learning_rate = 0.001;
-    let mut metrics = MetricsTracker::new();
+    let mut metrics = MetricsTracker::new(2, 1000);  // 2 FC layers, 1000 history
     let mut rng = rand::thread_rng();
     
     println!("Starting training...");
@@ -371,8 +388,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 
                 // Accuracy
-                let pred_class = pred.argmax().unwrap();
-                let true_class = label.argmax().unwrap();
+                let pred_class = argmax(pred.view());
+                let true_class = argmax(label.view());
                 if pred_class == true_class {
                     correct += 1;
                 }
@@ -394,8 +411,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let image = test_images.slice(s![i..i+1, .., .., ..]);
             let predictions = model.forward(&image.to_owned());
             
-            let pred_class = predictions.row(0).argmax().unwrap();
-            let true_class = test_labels.row(i).argmax().unwrap();
+            let pred_class = argmax(predictions.row(0));
+            let true_class = argmax(test_labels.row(i));
             
             if pred_class == true_class {
                 val_correct += 1;
@@ -409,7 +426,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Epoch {}/{}: Loss = {:.4}, Train Acc = {:.2}%, Val Acc = {:.2}%",
                 epoch + 1, epochs, epoch_loss / total as f32, train_acc, val_acc);
         
-        metrics.add_loss(epoch_loss / total as f32);
+        metrics.record_loss(epoch_loss / total as f32);
     }
     
     println!("\nTraining complete!");
@@ -422,8 +439,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let image = test_images.slice(s![i..i+1, .., .., ..]);
         let predictions = model.forward(&image.to_owned());
         
-        let pred_class = predictions.row(0).argmax().unwrap();
-        let true_class = test_labels.row(i).argmax().unwrap();
+        let pred_class = argmax(predictions.row(0));
+        let true_class = argmax(test_labels.row(i));
         
         println!("Sample {}: Predicted = {}, Actual = {}", 
                 i + 1, pred_class, true_class);

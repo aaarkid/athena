@@ -5,13 +5,12 @@
 
 use athena::network::NeuralNetwork;
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, Adam};
+use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::parallel::{ParallelNetwork, ParallelGradients, ParallelReplayBuffer, ParallelAugmentation};
 use athena::replay_buffer::Experience;
 use athena::metrics::MetricsTracker;
 use ndarray::{Array1, Array2, Array4};
 use std::time::Instant;
-use rayon::prelude::*;
 
 /// Simple CartPole-like environment for demonstration
 struct SimpleEnv {
@@ -76,7 +75,7 @@ fn main() {
     let q_network = NeuralNetwork::new(
         &[4, 128, 128, 2],
         &[Activation::Relu, Activation::Relu, Activation::Linear],
-        OptimizerWrapper::Adam(Adam::new())
+        OptimizerWrapper::SGD(athena::optimizer::SGD::new())
     );
     
     // Create parallel network for fast inference
@@ -99,15 +98,15 @@ fn main() {
     let mut envs: Vec<SimpleEnv> = (0..num_envs).map(|_| SimpleEnv::new()).collect();
     
     // Metrics tracking
-    let mut metrics = MetricsTracker::new();
+    let mut metrics = MetricsTracker::new(3, 1000);
     
     println!("Starting parallel training with {} environments...\n", num_envs);
     
     for episode in 0..num_episodes {
         let episode_start = Instant::now();
         
-        // Parallel episode collection
-        let experiences: Vec<Vec<Experience>> = envs.par_iter_mut()
+        // Parallel episode collection (simplified without rayon)
+        let experiences: Vec<Vec<Experience>> = envs.iter_mut()
             .map(|env| {
                 let mut episode_experiences = Vec::new();
                 let mut state = env.reset();
@@ -120,7 +119,15 @@ fn main() {
                     } else {
                         // Use the main network for action selection (not parallel for single state)
                         let q_values = q_network.forward(state.view());
-                        q_values.argmax().unwrap()
+                        let mut max_idx = 0;
+                        let mut max_val = q_values[0];
+                        for (i, &val) in q_values.iter().enumerate().skip(1) {
+                            if val > max_val {
+                                max_val = val;
+                                max_idx = i;
+                            }
+                        }
+                        max_idx
                     };
                     
                     let (next_state, reward, done) = env.step(action);
@@ -228,8 +235,10 @@ fn main() {
         epsilon = (epsilon * epsilon_decay).max(epsilon_end);
         
         let episode_time = episode_start.elapsed();
-        metrics.add_metric("episode_time_ms", episode_time.as_millis() as f32);
-        metrics.add_metric("total_steps", total_steps as f32);
+        // Track episode completion
+        metrics.start_episode();
+        metrics.step(episode as f32);  // Just track something for now
+        metrics.end_episode();
     }
     
     println!("\nTraining complete!");

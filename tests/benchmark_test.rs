@@ -1,10 +1,9 @@
 use athena::{
     network::NeuralNetwork,
     activations::Activation,
-    optimizer::{OptimizerWrapper, SGD, Adam},
+    optimizer::{OptimizerWrapper, SGD},
     agent::DqnAgentBuilder,
     replay_buffer::{PrioritizedReplayBuffer, PriorityMethod},
-    layers::Layer,
 };
 use ndarray::{Array1, Array2};
 use std::time::Instant;

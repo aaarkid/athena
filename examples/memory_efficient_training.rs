@@ -7,14 +7,13 @@
 //! - Chunked batch processing
 
 use athena::network::NeuralNetwork;
-use athena::layers::Layer;
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, Adam};
+use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::memory_optimization::{
     GradientAccumulator, SparseLayer, ChunkedBatchProcessor, ArrayPool, InPlaceOps
 };
 use athena::metrics::MetricsTracker;
-use ndarray::{Array1, Array2, s};
+use ndarray::{Array1, Array2};
 use rand::Rng;
 
 /// Generate synthetic data for demonstration
@@ -54,7 +53,7 @@ fn main() {
     let mut network = NeuralNetwork::new(
         &[INPUT_SIZE, HIDDEN_SIZE, HIDDEN_SIZE, OUTPUT_SIZE],
         &[Activation::Relu, Activation::Relu, Activation::Tanh],
-        OptimizerWrapper::Adam(Adam::new())
+        OptimizerWrapper::SGD(SGD::new())
     );
     
     // Generate training data
@@ -65,7 +64,7 @@ fn main() {
     let mut gradient_accumulator = GradientAccumulator::new(&network);
     let mut chunked_processor = ChunkedBatchProcessor::new(CHUNK_SIZE);
     let mut array_pool = ArrayPool::new(20);
-    let mut metrics = MetricsTracker::new();
+    let mut metrics = MetricsTracker::new(network.layers.len(), 1000);
     
     // Check if any layers can be converted to sparse representation
     println!("\nAnalyzing network sparsity...");
@@ -202,7 +201,7 @@ fn main() {
         }
         
         let avg_loss = epoch_loss / steps_per_epoch as f32;
-        metrics.add_loss(avg_loss);
+        metrics.record_loss(avg_loss);
         
         println!("Epoch {}/{}: Loss = {:.6}", epoch + 1, epochs, avg_loss);
         
