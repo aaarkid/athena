@@ -8,8 +8,8 @@ pub use gradient_clipper::GradientClipper;
 pub use lr_scheduler::LearningRateScheduler;
 
 pub trait Optimizer {
-    fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32);
-    fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32);
+    fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32);
+    fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32);
 }
 
 use serde::{Serialize, Deserialize};
@@ -22,19 +22,19 @@ pub enum OptimizerWrapper {
 }
 
 impl Optimizer for OptimizerWrapper {
-    fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
+    fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
         match self {
-            OptimizerWrapper::SGD(optimizer) => optimizer.update_weights(weights, gradients, learning_rate),
-            OptimizerWrapper::Adam(optimizer) => optimizer.update_weights(weights, gradients, learning_rate),
-            OptimizerWrapper::RMSProp(optimizer) => optimizer.update_weights(weights, gradients, learning_rate),
+            OptimizerWrapper::SGD(optimizer) => optimizer.update_weights(layer_idx, weights, gradients, learning_rate),
+            OptimizerWrapper::Adam(optimizer) => optimizer.update_weights(layer_idx, weights, gradients, learning_rate),
+            OptimizerWrapper::RMSProp(optimizer) => optimizer.update_weights(layer_idx, weights, gradients, learning_rate),
         }
     }
 
-    fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+    fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
         match self {
-            OptimizerWrapper::SGD(optimizer) => optimizer.update_biases(biases, gradients, learning_rate),
-            OptimizerWrapper::Adam(optimizer) => optimizer.update_biases(biases, gradients, learning_rate),
-            OptimizerWrapper::RMSProp(optimizer) => optimizer.update_biases(biases, gradients, learning_rate),
+            OptimizerWrapper::SGD(optimizer) => optimizer.update_biases(layer_idx, biases, gradients, learning_rate),
+            OptimizerWrapper::Adam(optimizer) => optimizer.update_biases(layer_idx, biases, gradients, learning_rate),
+            OptimizerWrapper::RMSProp(optimizer) => optimizer.update_biases(layer_idx, biases, gradients, learning_rate),
         }
     }
 }
@@ -55,12 +55,12 @@ impl Default for SGD {
 }
 
 impl Optimizer for SGD {
-    fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
+    fn update_weights(&mut self, _layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
         let gradients = gradients.broadcast(weights.shape()).unwrap().to_owned();
         weights.zip_mut_with(&gradients, |w, &g| *w -= learning_rate * g);
     }
 
-    fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+    fn update_biases(&mut self, _layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
         biases.zip_mut_with(gradients, |b, &g| *b -= learning_rate * g);
     }
 }
@@ -120,12 +120,11 @@ impl Adam {
 }
 
 impl Optimizer for Adam {
-    fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        let index = self.t - 1;
+    fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
         let gradients = &gradients.broadcast(weights.shape()).unwrap().to_owned();
 
-        let m = &mut self.m_weights[index];
-        let v = &mut self.v_weights[index];
+        let m = &mut self.m_weights[layer_idx];
+        let v = &mut self.v_weights[layer_idx];
 
         m.zip_mut_with(&(&*m * self.beta1 + &(gradients * (1.0 - self.beta1))), |a, b| *a = *b);
         v.zip_mut_with(&(&*v * self.beta2 + &(gradients * gradients * (1.0 - self.beta2))), |a, b| *a = *b);
@@ -135,7 +134,7 @@ impl Optimizer for Adam {
 
         *weights -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
         
-        // Track updates per layer
+        // Track updates
         self.update_count += 1;
         if self.update_count >= self.layer_count * 2 {
             self.t += 1;
@@ -143,11 +142,9 @@ impl Optimizer for Adam {
         }
     }
 
-    fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
-        let index = self.t - 1;
-
-        let m = &mut self.m_biases[index];
-        let v = &mut self.v_biases[index];
+    fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+        let m = &mut self.m_biases[layer_idx];
+        let v = &mut self.v_biases[layer_idx];
 
         m.zip_mut_with(&(&*m * self.beta1 + &(gradients * (1.0 - self.beta1))), |a, b| *a = *b);
         v.zip_mut_with(&(&*v * self.beta2 + &(gradients * gradients * (1.0 - self.beta2))), |a, b| *a = *b);
@@ -157,7 +154,7 @@ impl Optimizer for Adam {
 
         *biases -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
         
-        // Track updates per layer  
+        // Track updates
         self.update_count += 1;
         if self.update_count >= self.layer_count * 2 {
             self.t += 1;
@@ -174,8 +171,6 @@ pub struct RMSProp {
     pub epsilon: f32,
     v_weights: Vec<Array2<f32>>,
     v_biases: Vec<Array1<f32>>,
-    layer_count: usize,
-    current_layer: usize,
 }
 
 impl RMSProp {
@@ -189,15 +184,11 @@ impl RMSProp {
             .map(|layer| Array1::<f32>::zeros(layer.biases.dim()))
             .collect();
             
-        let layer_count = layers.len();
-        
         RMSProp {
             beta,
             epsilon,
             v_weights,
             v_biases,
-            layer_count,
-            current_layer: 0,
         }
     }
     
@@ -207,11 +198,10 @@ impl RMSProp {
 }
 
 impl Optimizer for RMSProp {
-    fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        let index = self.current_layer;
+    fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
         let gradients = &gradients.broadcast(weights.shape()).unwrap().to_owned();
         
-        let v = &mut self.v_weights[index];
+        let v = &mut self.v_weights[layer_idx];
         
         // Update moving average of squared gradients
         v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
@@ -220,18 +210,13 @@ impl Optimizer for RMSProp {
         *weights -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
     }
     
-    fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
-        let index = self.current_layer;
-        
-        let v = &mut self.v_biases[index];
+    fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+        let v = &mut self.v_biases[layer_idx];
         
         // Update moving average of squared gradients
         v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
         
         // Update biases
         *biases -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
-        
-        // Move to next layer
-        self.current_layer = (self.current_layer + 1) % self.layer_count;
     }
 }

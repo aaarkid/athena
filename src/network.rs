@@ -130,9 +130,9 @@ impl NeuralNetwork {
         let output_errors = &outputs - &targets;
         let gradients = self.backward_batch(output_errors.view());
     
-        for (layer, (weight_gradients, bias_gradients)) in self.layers.iter_mut().zip(gradients) {
-            self.optimizer.update_weights(&mut layer.weights, &weight_gradients, learning_rate);
-            self.optimizer.update_biases(&mut layer.biases, &bias_gradients, learning_rate);
+        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
+            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
+            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
         }
     }
     
