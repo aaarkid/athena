@@ -154,15 +154,15 @@ impl DqnAgent {
         }
         
         // Get current Q-values
-        let current_q_values = self.q_network.forward_minibatch(states.view());
+        let current_q_values = self.q_network.forward_batch(states.view());
         
         // Calculate target Q-values
         let mut target_q_values = current_q_values.clone();
         
         if self.use_double_dqn {
             // Double DQN: use main network to select actions, target network to evaluate
-            let next_q_values_main = self.q_network.forward_minibatch(next_states.view());
-            let next_q_values_target = self.target_network.forward_minibatch(next_states.view());
+            let next_q_values_main = self.q_network.forward_batch(next_states.view());
+            let next_q_values_target = self.target_network.forward_batch(next_states.view());
             
             for i in 0..batch_size {
                 if !dones[i] {
@@ -185,7 +185,7 @@ impl DqnAgent {
             }
         } else {
             // Standard DQN: use target network for both selection and evaluation
-            let next_q_values = self.target_network.forward_minibatch(next_states.view());
+            let next_q_values = self.target_network.forward_batch(next_states.view());
             
             for i in 0..batch_size {
                 if !dones[i] {
@@ -203,7 +203,7 @@ impl DqnAgent {
         self.q_network.train_minibatch(states.view(), target_q_values.view(), learning_rate);
         
         // Calculate loss for monitoring
-        let predictions = self.q_network.forward_minibatch(states.view());
+        let predictions = self.q_network.forward_batch(states.view());
         let loss = (&predictions - &target_q_values).mapv(|x| x * x).mean()
             .unwrap_or(f32::INFINITY);
         

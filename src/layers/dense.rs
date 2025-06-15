@@ -129,11 +129,11 @@ impl LayerTrait for DenseLayer {
     }
 }
 
-/// Backward compatibility alias
+/// Convenient alias for DenseLayer
 pub type Layer = DenseLayer;
 
 impl Layer {
-    /// Create a vector of layers from layer sizes (for backward compatibility)
+    /// Create a vector of layers from layer sizes
     pub fn to_vector(layer_sizes: &[usize]) -> Vec<Layer> {
         let mut layers = Vec::new();
         for i in 0..layer_sizes.len() - 1 {
@@ -147,16 +147,5 @@ impl Layer {
             layers.push(Layer::new(input_size, output_size, activation));
         }
         layers
-    }
-    
-    /// Backward compatibility methods
-    #[inline]
-    pub fn forward_minibatch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        self.forward_batch(inputs)
-    }
-    
-    #[inline]
-    pub fn backward_minibatch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
-        self.backward_batch(output_errors)
     }
 }

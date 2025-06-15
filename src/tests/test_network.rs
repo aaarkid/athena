@@ -32,7 +32,7 @@ fn test_forward_pass() {
 }
 
 #[test]
-fn test_forward_minibatch() {
+fn test_forward_batch() {
     let layer_sizes = &[3, 4, 2];
     let activations = &[Activation::Relu, Activation::Relu];
     let optimizer = OptimizerWrapper::SGD(SGD::new());
@@ -43,7 +43,7 @@ fn test_forward_minibatch() {
         [4.0, 5.0, 6.0],
     ]);
     
-    let outputs = network.forward_minibatch(inputs.view());
+    let outputs = network.forward_batch(inputs.view());
     assert_eq!(outputs.shape(), [2, 2]);
 }
 

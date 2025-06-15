@@ -174,6 +174,8 @@ pub struct RMSProp {
     pub epsilon: f32,
     v_weights: Vec<Array2<f32>>,
     v_biases: Vec<Array1<f32>>,
+    layer_count: usize,
+    current_layer: usize,
 }
 
 impl RMSProp {
@@ -187,11 +189,15 @@ impl RMSProp {
             .map(|layer| Array1::<f32>::zeros(layer.biases.dim()))
             .collect();
             
+        let layer_count = layers.len();
+        
         RMSProp {
             beta,
             epsilon,
             v_weights,
             v_biases,
+            layer_count,
+            current_layer: 0,
         }
     }
     
@@ -202,8 +208,7 @@ impl RMSProp {
 
 impl Optimizer for RMSProp {
     fn update_weights(&mut self, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        // TODO: Track layer index properly
-        let index = 0;
+        let index = self.current_layer;
         let gradients = &gradients.broadcast(weights.shape()).unwrap().to_owned();
         
         let v = &mut self.v_weights[index];
@@ -216,8 +221,7 @@ impl Optimizer for RMSProp {
     }
     
     fn update_biases(&mut self, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
-        // TODO: Track layer index properly
-        let index = 0;
+        let index = self.current_layer;
         
         let v = &mut self.v_biases[index];
         
@@ -226,5 +230,8 @@ impl Optimizer for RMSProp {
         
         // Update biases
         *biases -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
+        
+        // Move to next layer
+        self.current_layer = (self.current_layer + 1) % self.layer_count;
     }
 }

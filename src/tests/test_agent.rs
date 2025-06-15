@@ -1,8 +1,7 @@
 use ndarray::array;
 use crate::agent::{DqnAgent, DqnAgentBuilder};
-use crate::optimizer::{OptimizerWrapper, SGD, Adam};
+use crate::optimizer::{OptimizerWrapper, SGD};
 use crate::replay_buffer::Experience;
-use crate::layers::Layer;
 use crate::activations::Activation;
 
 #[test]
