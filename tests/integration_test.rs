@@ -4,7 +4,7 @@ use athena::{
     optimizer::{OptimizerWrapper, SGD, RMSProp, GradientClipper, LearningRateScheduler},
     layers::{Layer, DenseLayer, BatchNormLayer, DropoutLayer, WeightInit, LayerTrait},
     activations::Activation,
-    replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod},
+    replay_buffer::{PrioritizedReplayBuffer, PriorityMethod},
 };
 use ndarray::{array, Array1};
 

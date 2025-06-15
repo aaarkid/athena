@@ -11,7 +11,6 @@ pub mod metrics;
 pub mod network;
 pub mod optimizer;
 pub mod replay_buffer;
-pub mod replay_buffer_v2;
 pub mod visualization;
 
 // Re-export commonly used types for backward compatibility
