@@ -1,10 +1,9 @@
 use athena::{
-    agent_v2::DqnAgentBuilder,
+    agent::DqnAgentBuilder,
     network::NeuralNetwork,
-    optimizer::{OptimizerWrapper, SGD, Adam, RMSProp, GradientClipper, LearningRateScheduler},
-    layers::{Layer, DenseLayer, BatchNormLayer, DropoutLayer, WeightInit},
+    optimizer::{OptimizerWrapper, SGD, RMSProp, GradientClipper, LearningRateScheduler},
+    layers::{Layer, DenseLayer, BatchNormLayer, DropoutLayer, WeightInit, LayerTrait},
     activations::Activation,
-    replay_buffer::ReplayBuffer,
     replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod},
 };
 use ndarray::{array, Array1};
@@ -25,13 +24,7 @@ fn test_end_to_end_training() {
     }
     
     // Create agent with all advanced features
-    let layers = vec![
-        Layer::new(2, 64, Activation::Relu),
-        Layer::new(64, 32, Activation::Relu),
-        Layer::new(32, 2, Activation::Linear),
-    ];
-    
-    let optimizer = OptimizerWrapper::Adam(Adam::new(&layers, 0.9, 0.999, 1e-8));
+    let optimizer = OptimizerWrapper::SGD(SGD::new());
     
     let mut agent = DqnAgentBuilder::new()
         .layer_sizes(&[2, 64, 32, 2])
@@ -54,12 +47,12 @@ fn test_end_to_end_training() {
     let episodes = 10;
     let steps_per_episode = 50;
     
-    for episode in 0..episodes {
+    for _episode in 0..episodes {
         let mut episode_reward = 0.0;
         
         for step in 0..steps_per_episode {
             let state = get_state(step);
-            let action = agent.act(state.view());
+            let action = agent.act(state.view()).unwrap();
             let reward = get_reward(action, step);
             let next_state = get_state(step + 1);
             let done = step == steps_per_episode - 1;
@@ -80,8 +73,8 @@ fn test_end_to_end_training() {
             
             // Train if enough experiences
             if replay_buffer.len() >= 32 {
-                let (batch, weights, indices) = replay_buffer.sample_with_weights(32, 0.4);
-                agent.train_on_batch(&batch.iter().collect::<Vec<_>>(), 0.99, 0.001);
+                let (batch, _weights, indices) = replay_buffer.sample_with_weights(32, 0.4);
+                let _ = agent.train_on_batch(&batch, 0.99, 0.001).unwrap();
                 
                 // Update priorities based on TD error (simplified)
                 let new_priorities: Vec<f32> = batch.iter().map(|_| 1.0).collect();
@@ -102,18 +95,19 @@ fn test_end_to_end_training() {
 #[test]
 fn test_network_with_advanced_layers() {
     // Create a network with batch norm and dropout
-    let mut network = NeuralNetwork::new_empty();
+    let _network = NeuralNetwork::new_empty();
     
     // Add layers manually (since we need special layer types)
     let dense1 = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::HeNormal);
-    let batch_norm1 = BatchNormLayer::new(64);
-    let dropout1 = DropoutLayer::new(0.2);
+    let _batch_norm1 = BatchNormLayer::new(64, 0.9, 1e-5);
+    let _dropout1 = DropoutLayer::new(64, 0.2);
     let dense2 = DenseLayer::new_with_init(64, 32, Activation::Relu, WeightInit::XavierUniform);
     let dense3 = DenseLayer::new(32, 1, Activation::Linear);
     
     // Test forward pass
     let input = Array1::ones(10);
-    let _ = dense1.forward(input.view());
+    let mut dense1_mut = dense1.clone();
+    let _ = dense1_mut.forward(input.view());
     
     // Verify shapes and properties
     assert_eq!(dense1.weights.shape(), [10, 64]);
@@ -125,11 +119,11 @@ fn test_network_with_advanced_layers() {
 fn test_gradient_clipping_with_optimizer() {
     let layer_sizes = &[5, 10, 2];
     let activations = &[Activation::Relu, Activation::Sigmoid];
-    let mut optimizer = OptimizerWrapper::SGD(SGD::new());
+    let optimizer = OptimizerWrapper::SGD(SGD::new());
     let mut network = NeuralNetwork::new(layer_sizes, activations, optimizer.clone());
     
     // Create gradient clipper
-    let clipper = GradientClipper::ClipByGlobalNorm { max_norm: 1.0 };
+    let _clipper = GradientClipper::ClipByGlobalNorm { max_norm: 1.0 };
     
     // Train with large gradients that need clipping
     let inputs = ndarray::Array2::ones((1, 5)) * 100.0;
@@ -178,7 +172,7 @@ fn test_save_load_complex_agent() {
     
     let optimizer = OptimizerWrapper::RMSProp(RMSProp::new(&layers, 0.95, 1e-8));
     
-    let agent = DqnAgentBuilder::new()
+    let mut agent = DqnAgentBuilder::new()
         .layer_sizes(&[4, 32, 16, 2])
         .activations(&[
             Activation::LeakyRelu { alpha: 0.1 },
@@ -194,15 +188,18 @@ fn test_save_load_complex_agent() {
     
     // Test action
     let state = array![0.1, 0.2, 0.3, 0.4];
-    let action_before = agent.act_greedy(state.view());
+    agent.epsilon = 0.0;  // Set to greedy
+    let action_before = agent.act(state.view()).unwrap();
     
     // Save and load
     let path = "test_complex_agent.bin";
     agent.save(path).unwrap();
-    let loaded = athena::agent_v2::DqnAgentV2::load(path).unwrap();
+    let loaded = athena::agent::DqnAgent::load(path).unwrap();
     
     // Verify same behavior
-    let action_after = loaded.act_greedy(state.view());
+    let mut loaded_mut = loaded;
+    loaded_mut.epsilon = 0.0;  // Set to greedy
+    let action_after = loaded_mut.act(state.view()).unwrap();
     assert_eq!(action_before, action_after);
     
     // Cleanup
@@ -240,7 +237,7 @@ fn test_error_handling() {
     match result {
         Err(AthenaError::InvalidParameter { name, reason }) => {
             assert_eq!(name, "layer_sizes");
-            assert!(reason.contains("required"));
+            assert!(reason.contains("at least 2 layers"));
         }
         _ => panic!("Expected InvalidParameter error"),
     }

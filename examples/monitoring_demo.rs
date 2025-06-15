@@ -10,7 +10,7 @@
 ***/
 
 use athena::{
-    agent_v2::DqnAgentBuilder,
+    agent::DqnAgentBuilder,
     optimizer::{OptimizerWrapper, Adam},
     layers::Layer,
     activations::Activation,

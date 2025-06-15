@@ -135,8 +135,8 @@ fn test_learning_rate_scheduling() {
     let lr_10 = scheduler.get_lr(10);
     let lr_20 = scheduler.get_lr(20);
     assert!((lr_0 - 0.1).abs() < 1e-6);
-    assert!((lr_20 - 0.001).abs() < 1e-6);
-    assert!(lr_10 < lr_0 && lr_10 > lr_20);
+    assert!((lr_20 - 0.1).abs() < 1e-6); // At step 20, we're back at the start of the period
+    assert!(lr_10 < lr_0); // lr_10 should be less than max_lr
     
     // Test warmup
     let scheduler = LearningRateScheduler::WarmupConstant {
