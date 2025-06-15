@@ -68,6 +68,10 @@ impl ReplayBuffer {
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
+    
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
 }
 
 /// Priority method for experiences
@@ -285,6 +289,11 @@ impl PrioritizedReplayBuffer {
     /// Check if the buffer is empty
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+    
+    /// Get the capacity of the buffer
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 }
 
