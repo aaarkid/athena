@@ -71,9 +71,13 @@ pub mod dense;
 pub mod batch_norm;
 pub mod dropout;
 pub mod initialization;
+pub mod conv;
+pub mod pooling;
 
 pub use traits::Layer as LayerTrait;
 pub use dense::{DenseLayer, Layer};
 pub use batch_norm::BatchNormLayer;
 pub use dropout::DropoutLayer;
 pub use initialization::WeightInit;
+pub use conv::{Conv1DLayer, Conv2DLayer, Conv2DLayerBuilder};
+pub use pooling::{MaxPool1DLayer, MaxPool2DLayer, AvgPool2DLayer, GlobalAvgPoolLayer};

@@ -70,6 +70,8 @@ pub mod optimizer;
 pub mod replay_buffer;
 pub mod types;
 pub mod visualization;
+pub mod memory_optimization;
+pub mod parallel;
 
 #[cfg(feature = "python")]
 pub mod bindings;
