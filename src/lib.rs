@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod network;
 pub mod optimizer;
 pub mod replay_buffer;
+pub mod types;
 pub mod visualization;
 
 #[cfg(feature = "python")]
