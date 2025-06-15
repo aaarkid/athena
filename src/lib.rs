@@ -3,6 +3,7 @@ pub mod macros;
 
 pub mod activations;
 pub mod agent;
+pub mod algorithms;
 pub mod debug;
 pub mod error;
 pub mod layers; 
