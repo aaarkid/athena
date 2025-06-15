@@ -78,8 +78,8 @@ impl NetworkInspector {
             return None;
         }
         
-        let current = self.weight_stats_history.last().unwrap();
-        let previous = &self.weight_stats_history[self.weight_stats_history.len() - 2];
+        let current = self.weight_stats_history.last()?;
+        let previous = self.weight_stats_history.get(self.weight_stats_history.len() - 2)?;
         
         let changes: Vec<Statistics> = current.iter().zip(previous.iter())
             .map(|(curr, prev)| {

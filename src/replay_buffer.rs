@@ -1,3 +1,61 @@
+//! # Experience Replay Buffer Module
+//! 
+//! This module provides replay buffer implementations for experience replay in reinforcement learning.
+//! Experience replay is a crucial technique that improves sample efficiency and training stability
+//! by storing past experiences and sampling from them during training.
+//! 
+//! ## Why Experience Replay?
+//! 
+//! 1. **Breaks Correlation**: Sequential experiences are highly correlated, which can lead to
+//!    overfitting. Random sampling breaks these correlations.
+//! 2. **Data Efficiency**: Reuses experiences multiple times instead of discarding after one update.
+//! 3. **Stability**: Prevents catastrophic forgetting by maintaining a diverse set of experiences.
+//! 
+//! ## Available Buffers
+//! 
+//! - **ReplayBuffer**: Standard uniform sampling buffer
+//!   - O(1) insertion and removal
+//!   - O(n) uniform random sampling
+//!   - Fixed capacity with FIFO replacement
+//! 
+//! - **PrioritizedReplayBuffer**: Importance sampling based on TD error
+//!   - Samples experiences with higher learning potential more frequently
+//!   - Uses sum-tree for O(log n) sampling
+//!   - Includes importance sampling weights for bias correction
+//! 
+//! ## Usage Example
+//! 
+//! ```rust,no_run
+//! use athena::replay_buffer::{ReplayBuffer, Experience};
+//! use ndarray::array;
+//! 
+//! // Create a replay buffer with capacity 10000
+//! let mut buffer = ReplayBuffer::new(10000);
+//! 
+//! // Add an experience
+//! let experience = Experience {
+//!     state: array![0.1, 0.2, 0.3, 0.4],
+//!     action: 1,
+//!     reward: 1.0,
+//!     next_state: array![0.2, 0.3, 0.4, 0.5],
+//!     done: false,
+//! };
+//! buffer.add(experience);
+//! 
+//! // Sample a batch for training
+//! if buffer.len() >= 32 {
+//!     let batch = buffer.sample(32);
+//!     // Train on batch...
+//! }
+//! ```
+//! 
+//! ## Best Practices
+//! 
+//! 1. **Buffer Size**: Use at least 10,000 for simple tasks, 100,000+ for complex ones
+//! 2. **Batch Size**: 32-256 is typical, larger batches are more stable but slower
+//! 3. **Prioritization**: Use α=0.6 for priority exponent, β=0.4→1.0 for importance sampling
+//! 4. **Warmup**: Fill buffer with random actions before training begins
+
 use ndarray::Array1;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -224,7 +282,7 @@ impl PrioritizedReplayBuffer {
                     .collect();
                     
                 // Sort by priority (descending)
-                indexed_priorities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                indexed_priorities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 
                 // Calculate rank-based probabilities
                 let n = self.buffer.len() as f32;

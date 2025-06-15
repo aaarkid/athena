@@ -127,7 +127,7 @@ pub fn export_training_report(
                  i + 1,
                  layer.weights.shape()[0],
                  layer.weights.shape()[1],
-                 format!("{:?}", layer.activation).split("::").last().unwrap())?;
+                 format!("{:?}", layer.activation).split("::").last().unwrap_or("Unknown"))?;
     }
     
     writeln!(file)?;

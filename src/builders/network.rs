@@ -159,10 +159,7 @@ mod tests {
         
         // Mismatched layer sizes and activations
         let result = NetworkBuilder::new()
-            .add_layers(&[4, 32, 2], &[Activation::Relu])
-            .unwrap()
-            .with_sgd()
-            .build();
-        assert!(result.is_ok()); // This should work - 2 layers need 2 activations
+            .add_layers(&[4, 32, 2], &[Activation::Relu]);
+        assert!(result.is_err()); // This should fail - 2 layers need 2 activations, only 1 provided
     }
 }

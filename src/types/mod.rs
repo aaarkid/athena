@@ -362,24 +362,24 @@ mod tests {
     #[test]
     fn test_dense_state() {
         let state = DenseState::from_vec(vec![1.0, 2.0, 3.0]);
-        assert_eq!(state.dim(), 3);
-        assert_eq!(state.to_array(), array![1.0, 2.0, 3.0]);
+        assert_eq!(State::dim(&state), 3);
+        assert_eq!(State::to_array(&state), array![1.0, 2.0, 3.0]);
     }
     
     #[test]
     fn test_discrete_action() {
         let action = DiscreteAction::new(5);
-        assert_eq!(action.to_discrete(), Some(5));
-        assert_eq!(action.to_continuous(), None);
-        assert!(action.is_discrete());
+        assert_eq!(Action::to_discrete(&action), Some(5));
+        assert_eq!(Action::to_continuous(&action), None);
+        assert!(Action::is_discrete(&action));
     }
     
     #[test]
     fn test_continuous_action() {
         let action = ContinuousAction::from_vec(vec![0.1, -0.5, 0.8]);
-        assert_eq!(action.to_discrete(), None);
-        assert_eq!(action.to_continuous(), Some(array![0.1, -0.5, 0.8]));
-        assert!(!action.is_discrete());
+        assert_eq!(Action::to_discrete(&action), None);
+        assert_eq!(Action::to_continuous(&action), Some(array![0.1, -0.5, 0.8]));
+        assert!(!Action::is_discrete(&action));
     }
     
     #[test]

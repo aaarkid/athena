@@ -96,7 +96,7 @@ pub fn histogram(values: &[f32], bins: usize) -> String {
         counts[bin] += 1;
     }
     
-    let max_count = *counts.iter().max().unwrap();
+    let max_count = *counts.iter().max().unwrap_or(&1);
     let scale = 40.0 / max_count as f32;
     
     let mut output = String::new();

@@ -110,7 +110,7 @@ impl ValueBasedAgent<crate::types::DenseState> for DqnAgentAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DenseState, DiscreteAction};
+    use crate::types::DenseState;
     use ndarray::array;
     
     #[test]
