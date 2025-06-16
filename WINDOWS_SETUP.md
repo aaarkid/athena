@@ -134,6 +134,28 @@ cargo run --release --example simple_benchmark --features gpu
 cargo run --release --example gpu_acceleration --features gpu
 ```
 
+## Testing Your Setup
+
+After installation, run one of the test scripts:
+
+```batch
+# Full test suite (may fail on comprehensive_benchmark example)
+test_windows_build.bat
+
+# Minimal test suite (recommended for initial testing)
+test_windows_minimal.bat
+```
+
+The minimal test will:
+1. Build without GPU support
+2. Build with GPU mock (no OpenCL required)
+3. Run core library tests
+4. Run simple benchmark
+
+The full test additionally includes:
+- Build with full GPU support (if OpenCL is installed)
+- All example builds (some may have issues)
+
 ## Expected Output
 
 With working GPU support:

@@ -1,10 +1,10 @@
 use athena::network::NeuralNetwork;
-use athena::layers::{Layer, BatchNormLayer, DropoutLayer};
+use athena::layers::{dense::DenseLayer, BatchNormLayer, DropoutLayer, traits::Layer};
 use athena::activations::Activation;
 use athena::optimizer::{OptimizerWrapper, Adam, SGD};
 use athena::agent::DqnAgent;
 use athena::replay_buffer::{ReplayBuffer, Experience};
-use athena::algorithms::{A2CAgent, PPOAgent, SACAgent, TD3Agent};
+use athena::algorithms::{a2c::A2CAgent, ppo::PPOAgent, sac::SACAgent, td3::TD3Agent};
 use ndarray::{Array1, Array2};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
@@ -19,7 +19,7 @@ fn benchmark_layer_types() {
     let iterations = 100;
     
     // Dense layer
-    let mut dense = Layer::new(input_size, output_size, Activation::Relu);
+    let mut dense = DenseLayer::new(input_size, output_size, Activation::Relu);
     let input = Array2::random((batch_size, input_size), Uniform::new(-1.0, 1.0));
     
     let start = Instant::now();
@@ -55,51 +55,42 @@ fn benchmark_layer_types() {
 fn benchmark_optimizers() {
     println!("\n=== Optimizer Benchmarks ===\n");
     
-    let layer_sizes = &[128, 256, 256, 64];
+    let layer_sizes = &[128, 256, 128, 64];
     let batch_size = 32;
     let iterations = 100;
     
-    // Create dummy layers for Adam initialization
-    let layers: Vec<Layer> = layer_sizes.windows(2)
-        .map(|w| Layer::new(w[0], w[1], Activation::Relu))
-        .collect();
-    
     // SGD
-    let activations = vec![Activation::Relu; layer_sizes.len() - 1];
+    let activations = vec![Activation::Relu, Activation::Relu, Activation::Linear];
     let mut network_sgd = NeuralNetwork::new(
         layer_sizes,
         &activations,
         OptimizerWrapper::SGD(SGD::new())
     );
-    network_sgd.set_learning_rate(0.01);
     
     let inputs = Array2::random((batch_size, 128), Uniform::new(-1.0, 1.0));
     let targets = Array2::random((batch_size, 64), Uniform::new(0.0, 1.0));
     
     let start = Instant::now();
     for _ in 0..iterations {
-        let predictions = network_sgd.forward_batch(inputs.view());
-        let errors = &predictions - &targets;
-        let _ = network_sgd.backward_batch(errors.view());
-        network_sgd.update_weights();
+        network_sgd.train_minibatch(inputs.view(), targets.view(), 0.01);
     }
     let sgd_time = start.elapsed();
     println!("SGD Optimizer: {:?} ({:.2} ms/iter)", sgd_time, sgd_time.as_secs_f64() * 1000.0 / iterations as f64);
     
     // Adam
+    // Create dummy layers for Adam initialization
+    let dummy_layers: Vec<DenseLayer> = layer_sizes.windows(2).zip(activations.iter())
+        .map(|(w, act)| DenseLayer::new(w[0], w[1], act.clone()))
+        .collect();
     let mut network_adam = NeuralNetwork::new(
         layer_sizes,
         &activations,
-        OptimizerWrapper::Adam(Adam::new(&layers, 0.9, 0.999, 1e-8))
+        OptimizerWrapper::Adam(Adam::new(&dummy_layers, 0.9, 0.999, 1e-8))
     );
-    network_adam.set_learning_rate(0.001);
     
     let start = Instant::now();
     for _ in 0..iterations {
-        let predictions = network_adam.forward_batch(inputs.view());
-        let errors = &predictions - &targets;
-        let _ = network_adam.backward_batch(errors.view());
-        network_adam.update_weights();
+        network_adam.train_minibatch(inputs.view(), targets.view(), 0.001);
     }
     let adam_time = start.elapsed();
     println!("Adam Optimizer: {:?} ({:.2} ms/iter)", adam_time, adam_time.as_secs_f64() * 1000.0 / iterations as f64);
@@ -111,6 +102,7 @@ fn benchmark_rl_algorithms() {
     let state_size = 64;
     let action_size = 8;
     let batch_size = 32;
+    let learning_rate = 0.001;
     
     // Create sample experiences
     let mut buffer = ReplayBuffer::new(1000);
@@ -125,10 +117,10 @@ fn benchmark_rl_algorithms() {
     }
     
     // DQN
-    let dqn_layers: Vec<Layer> = vec![
-        Layer::new(state_size, 128, Activation::Relu),
-        Layer::new(128, 128, Activation::Relu),
-        Layer::new(128, action_size, Activation::Linear),
+    let dqn_layers: Vec<DenseLayer> = vec![
+        DenseLayer::new(state_size, 128, Activation::Relu),
+        DenseLayer::new(128, 128, Activation::Relu),
+        DenseLayer::new(128, action_size, Activation::Linear),
     ];
     let mut dqn = DqnAgent::new(
         &[state_size, 128, 128, action_size],
@@ -141,22 +133,39 @@ fn benchmark_rl_algorithms() {
     let start = Instant::now();
     for _ in 0..10 {
         let batch = buffer.sample(batch_size);
-        dqn.train_on_batch(&batch, 0.99);
+        dqn.train_on_batch(&batch, 0.99, learning_rate);
     }
     let dqn_time = start.elapsed();
     println!("DQN Agent: {:?} for 10 batches", dqn_time);
     
-    // PPO
-    let ppo = PPOAgent::new(state_size, action_size)
-        .learning_rate(3e-4)
-        .clip_epsilon(0.2)
-        .build();
+    // PPO - Create with proper parameters
+    let ppo_layers = &[state_size, 128, 128, action_size];
+    let ppo_optimizer = OptimizerWrapper::Adam(Adam::new(&dqn_layers, 0.9, 0.999, 1e-8));
+    let ppo = PPOAgent::new(
+        state_size,
+        action_size,
+        ppo_layers,
+        ppo_optimizer,
+        0.2,     // clip_epsilon
+        0.01,    // value_loss_coef
+        0.01,    // entropy_coef
+        4        // n_epochs
+    );
     println!("PPO Agent: Initialized (training benchmark omitted for brevity)");
     
-    // SAC
-    let sac = SACAgent::new(state_size, action_size, 1)
-        .learning_rate(3e-4)
-        .build();
+    // SAC - Create with proper parameters  
+    let sac_layers = &[state_size, 256, 256];
+    let sac_optimizer = OptimizerWrapper::Adam(Adam::new(&dqn_layers[0..2], 0.9, 0.999, 1e-8));
+    let sac = SACAgent::new(
+        state_size,
+        action_size,
+        sac_layers,
+        sac_optimizer,
+        0.99,    // gamma
+        0.005,   // tau
+        0.2,     // alpha
+        true     // automatic_entropy_tuning
+    );
     println!("SAC Agent: Initialized (continuous actions)");
 }
 
@@ -165,54 +174,41 @@ fn benchmark_memory() {
     
     // Large network
     let layer_sizes = &[1024, 512, 512, 256, 128];
-    let activations = vec![Activation::Relu; layer_sizes.len() - 1];
-    let layers: Vec<Layer> = layer_sizes.windows(2)
-        .map(|w| Layer::new(w[0], w[1], Activation::Relu))
+    let activations = vec![Activation::Relu, Activation::Relu, Activation::Relu, Activation::Linear];
+    let dummy_layers: Vec<DenseLayer> = layer_sizes.windows(2).zip(activations.iter())
+        .map(|(w, act)| DenseLayer::new(w[0], w[1], act.clone()))
         .collect();
     let _network = NeuralNetwork::new(
         layer_sizes,
         &activations,
-        OptimizerWrapper::Adam(Adam::new(&layers, 0.9, 0.999, 1e-8))
+        OptimizerWrapper::Adam(Adam::new(&dummy_layers, 0.9, 0.999, 1e-8))
     );
     
     let total_params: usize = layer_sizes.windows(2)
         .map(|w| w[0] * w[1] + w[1])
         .sum();
-    
-    let memory_mb = (total_params * 4) as f64 / (1024.0 * 1024.0);
+    let memory_mb = (total_params * 4) as f32 / (1024.0 * 1024.0);
     println!("Large Network Parameters: {}", total_params);
-    println!("Estimated Memory: {:.2} MB (weights only)", memory_mb);
-    println!("With Adam optimizer: ~{:.2} MB (including moments)", memory_mb * 3.0);
+    println!("Estimated Memory Usage: {:.2} MB (weights only)", memory_mb);
     
     // Replay buffer
     let buffer_size = 100_000;
     let state_size = 64;
-    let replay_memory = (buffer_size * state_size * 2 * 4) as f64 / (1024.0 * 1024.0);
-    println!("\nReplay Buffer ({}k experiences): ~{:.2} MB", buffer_size / 1000, replay_memory);
+    let buffer = ReplayBuffer::new(buffer_size);
+    let buffer_memory_mb = (buffer_size * state_size * 2 * 4) as f32 / (1024.0 * 1024.0);
+    println!("\nReplay Buffer Capacity: {}", buffer_size);
+    println!("Estimated Memory Usage: {:.2} MB", buffer_memory_mb);
 }
 
 fn main() {
-    println!("=== Athena Comprehensive Benchmark ===\n");
+    println!("Athena Comprehensive Benchmarks\n");
+    println!("================================\n");
     
     benchmark_layer_types();
     benchmark_optimizers();
     benchmark_rl_algorithms();
     benchmark_memory();
     
-    println!("\n=== Performance Summary ===");
-    println!("- Dense layers: Highly optimized with ndarray");
-    println!("- BatchNorm: Efficient running statistics");  
-    println!("- Optimizers: Adam ~20% slower than SGD (expected)");
-    println!("- RL algorithms: DQN fastest, SAC/TD3 more complex");
-    println!("- Memory: Scales linearly with network size");
-    
-    #[cfg(feature = "gpu")]
-    {
-        println!("\n=== GPU Acceleration ===");
-        println!("- GPU enabled (using mock in WSL2)");
-        println!("- Real speedup on native OS: 2-10x for large ops");
-        println!("- Best for batch_size > 32, layer_size > 256");
-    }
-    
-    println!("\n✓ All systems operational!");
+    println!("\n================================");
+    println!("Benchmarks Complete!");
 }
