@@ -1,6 +1,7 @@
 use ndarray::{Array2, ArrayView2};
 use std::time::Duration;
 use std::thread;
+use super::constants::*;
 
 #[cfg(feature = "gpu")]
 use super::{ComputeBackend, DeviceType};
@@ -45,17 +46,20 @@ impl MockGpuBackend {
             "Device: Mock Intel Arc GPU (Simulated)\n\
              Vendor: Intel Corporation (Mock)\n\
              Version: OpenCL 3.0 (Mock)\n\
-             Compute Units: 96 (Mock)\n\
-             Max Work Group Size: 1024 (Mock)\n\
-             Global Memory: 16384 MB (Mock)"
+             Compute Units: {} (Mock)\n\
+             Max Work Group Size: {} (Mock)\n\
+             Global Memory: {} MB (Mock)",
+            MOCK_GPU_COMPUTE_UNITS,
+            MOCK_GPU_MAX_WORK_GROUP_SIZE,
+            MOCK_GPU_GLOBAL_MEMORY_MB
         ))
     }
     
     fn simulate_gpu_delay(&self, size: usize) {
         if self.simulate_delay {
             // Simulate GPU computation time (much faster than CPU for large operations)
-            let delay_us = (size as f64).sqrt() as u64 / 10;
-            thread::sleep(Duration::from_micros(delay_us.min(1000)));
+            let delay_us = (size as f64).sqrt() as u64 / GPU_SIMULATION_DELAY_DIVISOR;
+            thread::sleep(Duration::from_micros(delay_us.min(MAX_GPU_SIMULATION_DELAY_US)));
         }
     }
 }
