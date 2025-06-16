@@ -24,6 +24,9 @@ pub struct GpuDenseLayer {
     pub biases: Array1<f32>,
     pub activation: Activation,
     gpu_backend: Option<GpuBackendType>,
+    // Cache for backward pass
+    pre_activation_output: Option<Array2<f32>>,
+    inputs: Option<Array2<f32>>,
 }
 
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
@@ -56,6 +59,8 @@ impl GpuDenseLayer {
             biases,
             activation,
             gpu_backend,
+            pre_activation_output: None,
+            inputs: None,
         })
     }
     
@@ -108,7 +113,7 @@ impl GpuDenseLayer {
         }
     }
     
-    /// Batch forward pass using GPU
+    /// Batch forward pass using GPU (returns pre-activation output)
     pub fn forward_batch_gpu(&mut self, inputs: ArrayView2<f32>) -> Result<Array2<f32>, String> {
         match &self.gpu_backend {
             Some(backend_type) => {
@@ -121,23 +126,7 @@ impl GpuDenseLayer {
                 
                 // Add bias (broadcasting)
                 let z_with_bias = &z + &self.biases;
-                
-                // Apply activation
-                match self.activation {
-                    Activation::Relu => {
-                        match backend_type {
-                            #[cfg(feature = "gpu")]
-                            GpuBackendType::Real(backend) => backend.lock().unwrap().relu(z_with_bias.view()),
-                            GpuBackendType::Mock(backend) => backend.lock().unwrap().relu(z_with_bias.view()),
-                        }
-                    },
-                    _ => {
-                        // Fall back to CPU for other activations
-                        let mut output = z_with_bias;
-                        self.activation.apply_batch(&mut output);
-                        Ok(output)
-                    }
-                }
+                Ok(z_with_bias)
             },
             None => Err("No GPU backend available".to_string()),
         }
@@ -158,30 +147,82 @@ impl LayerTrait for GpuDenseLayer {
     }
     
     fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        // For now, backward pass is still on CPU
-        // This would be a future optimization
-        let _output_error_2d = output_error.insert_axis(Axis(0));
-        (self.weights.clone(), self.biases.clone())
+        let output_error = output_error.insert_axis(Axis(0));
+        let (_adjusted_error, weight_gradients, bias_gradients) = self.backward_batch(output_error.view());
+        (weight_gradients, bias_gradients)
     }
     
     fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        self.forward_batch_gpu(inputs).unwrap_or_else(|e| {
+        // Cache inputs for backward pass
+        self.inputs = Some(inputs.to_owned());
+        
+        let z = self.forward_batch_gpu(inputs).unwrap_or_else(|e| {
             eprintln!("GPU batch forward failed: {}, falling back to CPU", e);
             // Fallback to CPU implementation
-            let z = inputs.dot(&self.weights) + &self.biases;
-            let mut output = z;
-            self.activation.apply_batch(&mut output);
-            output
-        })
+            inputs.dot(&self.weights) + &self.biases
+        });
+        
+        // Cache pre-activation output
+        self.pre_activation_output = Some(z.clone());
+        
+        // Apply activation
+        let mut output = z;
+        self.activation.apply_batch(&mut output);
+        output
     }
     
     fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
-        // Placeholder for GPU backward implementation
-        let batch_size = output_errors.shape()[0];
-        let input_errors = Array2::zeros((batch_size, self.weights.shape()[0]));
-        let weight_gradients = self.weights.clone();
-        let bias_gradients = self.biases.clone();
-        (input_errors, weight_gradients, bias_gradients)
+        let pre_activation_output = self.pre_activation_output.as_ref()
+            .expect("No pre-activation output stored. forward_batch() must be called before backward_batch()");
+        let inputs = self.inputs.as_ref()
+            .expect("No inputs stored. forward_batch() must be called before backward_batch()");
+        
+        // Compute activation derivative
+        let activation_deriv = self.activation.derivative_batch(pre_activation_output.view());
+        let adjusted_error = output_errors.to_owned() * &activation_deriv;
+        
+        // Try to use GPU for gradient computation
+        match &self.gpu_backend {
+            Some(backend_type) => {
+                // Weight gradients: inputs^T × adjusted_error
+                let weight_gradients = match backend_type {
+                    #[cfg(feature = "gpu")]
+                    GpuBackendType::Real(backend) => {
+                        backend.lock().unwrap().matmul(inputs.t(), adjusted_error.view())
+                            .unwrap_or_else(|_| inputs.t().dot(&adjusted_error))
+                    },
+                    GpuBackendType::Mock(backend) => {
+                        backend.lock().unwrap().matmul(inputs.t(), adjusted_error.view())
+                            .unwrap_or_else(|_| inputs.t().dot(&adjusted_error))
+                    },
+                };
+                
+                // Bias gradients: sum across batch dimension
+                let bias_gradients = adjusted_error.sum_axis(Axis(0));
+                
+                // Input errors for backpropagation: adjusted_error × weights^T
+                let input_errors = match backend_type {
+                    #[cfg(feature = "gpu")]
+                    GpuBackendType::Real(backend) => {
+                        backend.lock().unwrap().matmul(adjusted_error.view(), self.weights.t())
+                            .unwrap_or_else(|_| adjusted_error.dot(&self.weights.t()))
+                    },
+                    GpuBackendType::Mock(backend) => {
+                        backend.lock().unwrap().matmul(adjusted_error.view(), self.weights.t())
+                            .unwrap_or_else(|_| adjusted_error.dot(&self.weights.t()))
+                    },
+                };
+                
+                (input_errors, weight_gradients, bias_gradients)
+            },
+            None => {
+                // CPU fallback
+                let weight_gradients = inputs.t().dot(&adjusted_error);
+                let bias_gradients = adjusted_error.sum_axis(Axis(0));
+                let input_errors = adjusted_error.dot(&self.weights.t());
+                (input_errors, weight_gradients, bias_gradients)
+            }
+        }
     }
     
     fn weights_mut(&mut self) -> &mut Array2<f32> {
@@ -214,6 +255,8 @@ impl LayerTrait for GpuDenseLayer {
             let mut cloned = Box::new(new_layer);
             cloned.weights = self.weights.clone();
             cloned.biases = self.biases.clone();
+            cloned.pre_activation_output = self.pre_activation_output.clone();
+            cloned.inputs = self.inputs.clone();
             cloned
         } else {
             // Fall back to CPU layer if GPU init fails
