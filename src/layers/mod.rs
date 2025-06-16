@@ -76,6 +76,7 @@ pub mod pooling;
 pub mod lstm;
 pub mod gru;
 pub mod embedding;
+pub mod gpu_dense;
 
 pub use traits::Layer as LayerTrait;
 pub use dense::{DenseLayer, Layer};
@@ -87,3 +88,4 @@ pub use pooling::{MaxPool1DLayer, MaxPool2DLayer, AvgPool2DLayer, GlobalAvgPoolL
 pub use lstm::{LSTMLayer, LSTMGradients};
 pub use gru::{GRULayer, GRUGradients};
 pub use embedding::EmbeddingLayer;
+pub use gpu_dense::GpuDenseLayer;
