@@ -80,10 +80,10 @@ Tests are located in `src/lib.rs` and cover all major components. Each module ha
 When working on tasks:
 - Always use `/compact` mode during development
 - At the end of each TODO, always add these steps:
-  1. Update EFFICIENT_IMPLEMENTATION_STRATEGY.md with all progress made
-  2. Refer to EFFICIENT_IMPLEMENTATION_STRATEGY.md for next tasks and update the TODO with the next tasks
+  1. Update IMPLEMENTATION_STATUS.md with all progress made
+  2. Refer to ADVANCED_FEATURES_PLAN.md for next tasks and update the TODO with the next tasks
   3. Continue working on the next task without stopping to explain completion
-- The goal is continuous progress through the implementation strategy
+- The goal is continuous progress through the advanced features plan
 
 ## General Development Rules
 
@@ -91,4 +91,4 @@ When working on tasks:
 - Keep working continuously through tasks
 - Always test and verify progress with `cargo test` and `cargo build`
 - Don't stop to explain that you're done - move to the next task
-- Refer to EFFICIENT_IMPLEMENTATION_STRATEGY.md as the source of truth for task order
+- Refer to ADVANCED_FEATURES_PLAN.md as the source of truth for task order
