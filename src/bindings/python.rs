@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::exceptions::PyValueError;
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, Array2};
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 
 use crate::network::NeuralNetwork;
@@ -33,8 +33,8 @@ impl PyNeuralNetwork {
                 "sigmoid" => Ok(Activation::Sigmoid),
                 "tanh" => Ok(Activation::Tanh),
                 "linear" => Ok(Activation::Linear),
-                "leaky_relu" => Ok(Activation::LeakyRelu(0.01)),
-                "elu" => Ok(Activation::Elu(1.0)),
+                "leaky_relu" => Ok(Activation::LeakyRelu { alpha: 0.01 }),
+                "elu" => Ok(Activation::Elu { alpha: 1.0 }),
                 "gelu" => Ok(Activation::Gelu),
                 _ => Err(PyValueError::new_err(format!("Unknown activation: {}", s))),
             })
@@ -104,7 +104,7 @@ impl PyNeuralNetwork {
 }
 
 /// Python wrapper for DqnAgent
-#[pyclass(name = "DqnAgent")]
+#[pyclass(name = "DqnAgent", unsendable)]
 pub struct PyDqnAgent {
     inner: DqnAgent,
 }
@@ -120,20 +120,17 @@ impl PyDqnAgent {
         target_update_freq: usize,
         use_double_dqn: bool,
     ) -> PyResult<Self> {
-        let activations = vec![Activation::Relu; hidden_sizes.len()]
-            .into_iter()
-            .chain(std::iter::once(Activation::Linear))
-            .collect::<Vec<_>>();
+        // Build layer sizes for the network
+        let mut layer_sizes = vec![state_size];
+        layer_sizes.extend_from_slice(&hidden_sizes);
+        layer_sizes.push(action_size);
         
         let optimizer = OptimizerWrapper::SGD(SGD::new());
         
         let agent = DqnAgent::new(
-            state_size,
-            action_size,
-            hidden_sizes,
-            activations,
-            optimizer,
+            &layer_sizes,
             epsilon,
+            optimizer,
             target_update_freq,
             use_double_dqn,
         );
@@ -156,8 +153,10 @@ impl PyDqnAgent {
         replay_buffer: &PyReplayBuffer,
         batch_size: usize,
         learning_rate: f32,
-    ) -> PyResult<()> {
-        self.inner.train(&replay_buffer.inner, batch_size, learning_rate)
+    ) -> PyResult<f32> {
+        let batch = replay_buffer.inner.sample(batch_size);
+        let batch_refs: Vec<&Experience> = batch.iter().collect();
+        self.inner.train_on_batch(&batch_refs, 0.99, learning_rate)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
     
@@ -275,7 +274,7 @@ mod tests {
         let layers = create_dummy_layers(&layer_sizes, &activations);
         
         assert_eq!(layers.len(), 3);
-        assert_eq!(layers[0].input_size, 4);
-        assert_eq!(layers[0].output_size, 32);
+        assert_eq!(layers[0].input_size(), 4);
+        assert_eq!(layers[0].output_size(), 32);
     }
 }
