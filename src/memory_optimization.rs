@@ -13,7 +13,6 @@ pub struct ArrayPool {
     /// Pools for different array sizes
     pool_1d: Vec<(usize, Array1<f32>)>,
     pool_2d: Vec<((usize, usize), Array2<f32>)>,
-    pool_4d: Vec<((usize, usize, usize, usize), Array4<f32>)>,
     /// Maximum number of arrays to keep in each pool
     max_pool_size: usize,
 }
@@ -24,7 +23,6 @@ impl ArrayPool {
         ArrayPool {
             pool_1d: Vec::with_capacity(max_pool_size),
             pool_2d: Vec::with_capacity(max_pool_size),
-            pool_4d: Vec::with_capacity(max_pool_size),
             max_pool_size,
         }
     }
@@ -141,6 +139,7 @@ impl GradientAccumulator {
 /// Memory-efficient batch processor that processes large batches in chunks
 pub struct ChunkedBatchProcessor {
     chunk_size: usize,
+    #[allow(dead_code)]
     array_pool: ArrayPool,
 }
 
@@ -187,10 +186,12 @@ pub struct SparseLayer {
     /// Column pointers for CSC format
     col_pointers: Vec<usize>,
     /// Shape of the weight matrix
+    #[allow(dead_code)]
     shape: (usize, usize),
     /// Bias values
     biases: Array1<f32>,
     /// Sparsity threshold
+    #[allow(dead_code)]
     threshold: f32,
 }
 
