@@ -29,17 +29,12 @@
 //! ## Usage Example
 //! 
 //! ```rust,no_run
-//! use athena::optimizer::{OptimizerWrapper, Adam};
+//! use athena::optimizer::{OptimizerWrapper, SGD};
 //! use athena::network::NeuralNetwork;
 //! use athena::activations::Activation;
 //! 
-//! // Create Adam optimizer with custom parameters
-//! let optimizer = OptimizerWrapper::Adam(Adam::new(
-//!     0.001,  // learning rate (will be multiplied by the train method's lr)
-//!     0.9,    // beta1 (momentum)
-//!     0.999,  // beta2 (RMSprop)
-//!     1e-8    // epsilon (numerical stability)
-//! ));
+//! // Create SGD optimizer
+//! let optimizer = OptimizerWrapper::SGD(SGD::new());
 //! 
 //! // Create network with optimizer
 //! let network = NeuralNetwork::new(

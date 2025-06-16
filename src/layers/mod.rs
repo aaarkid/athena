@@ -46,8 +46,8 @@
 //! let dense = Layer::new_with_init(128, 64, Activation::Relu, WeightInit::HeUniform);
 //! 
 //! // Create regularization layers
-//! let batch_norm = BatchNormLayer::new(64);
-//! let dropout = DropoutLayer::new(64, 0.3);
+//! let batch_norm = BatchNormLayer::new(64, 0.9, 1e-5);  // num_features, momentum, epsilon
+//! let dropout = DropoutLayer::new(64, 0.3);  // size, dropout_rate
 //! ```
 //! 
 //! ## Layer Composition

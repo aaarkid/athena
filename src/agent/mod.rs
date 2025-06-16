@@ -22,14 +22,14 @@
 //! 
 //! ```rust,no_run
 //! use athena::agent::DqnAgent;
-//! use athena::optimizer::{OptimizerWrapper, Adam};
+//! use athena::optimizer::{OptimizerWrapper, SGD};
 //! use athena::replay_buffer::ReplayBuffer;
 //! use ndarray::array;
 //! 
 //! // Create a DQN agent for CartPole (4 inputs, 2 actions)
 //! let layer_sizes = &[4, 128, 128, 2];
-//! let optimizer = OptimizerWrapper::Adam(Adam::new(0.001, 0.9, 0.999, 1e-8));
-//! let agent = DqnAgent::new(layer_sizes, 0.1, optimizer, 1000, true);
+//! let optimizer = OptimizerWrapper::SGD(SGD::new());
+//! let mut agent = DqnAgent::new(layer_sizes, 0.1, optimizer, 1000, true);
 //! 
 //! // Create replay buffer
 //! let mut buffer = ReplayBuffer::new(10000);

@@ -48,17 +48,15 @@
 //! 
 //! ```rust,no_run
 //! use athena::algorithms::{PPOAgent, PPOBuilder};
-//! use athena::optimizer::{OptimizerWrapper, Adam};
+//! use athena::optimizer::{OptimizerWrapper, SGD};
 //! 
 //! // Create a PPO agent for continuous control
-//! let optimizer = OptimizerWrapper::Adam(Adam::new(3e-4, 0.9, 0.999, 1e-8));
+//! let optimizer = OptimizerWrapper::SGD(SGD::new());
 //! 
-//! let agent = PPOBuilder::new()
-//!     .input_dim(24)      // Observation space
-//!     .action_dim(4)      // Action space
-//!     .hidden_dims(vec![256, 256])
+//! let agent = PPOBuilder::new(24, 4)  // state_size, action_size
+//!     .hidden_sizes(vec![256, 256])
 //!     .optimizer(optimizer)
-//!     .clip_epsilon(0.2)
+//!     .clip_param(0.2)
 //!     .value_coeff(0.5)
 //!     .entropy_coeff(0.01)
 //!     .build()
