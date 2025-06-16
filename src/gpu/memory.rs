@@ -61,6 +61,21 @@ impl GpuMemoryPool {
         self.allocated_count = 0;
         self.reused_count = 0;
     }
+    
+    /// Clean up unused buffers, keeping at most max_buffers_per_size per size
+    pub fn cleanup_unused(&mut self, max_buffers_per_size: usize) {
+        for (_, buffers) in self.buffers.iter_mut() {
+            if buffers.len() > max_buffers_per_size {
+                // Keep only the most recently used buffers
+                buffers.truncate(max_buffers_per_size);
+            }
+        }
+    }
+    
+    /// Get total number of cached buffers
+    pub fn cached_buffer_count(&self) -> usize {
+        self.buffers.values().map(|v| v.len()).sum()
+    }
 }
 
 /// GPU array wrapper for automatic memory management
@@ -77,7 +92,7 @@ impl GpuArray2 {
             .queue(queue.clone())
             .flags(ocl::flags::MEM_READ_WRITE)
             .len(shape.0 * shape.1)
-            .copy_host_slice(array.as_slice().unwrap())
+            .copy_host_slice(array.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -88,7 +103,8 @@ impl GpuArray2 {
     pub fn to_array(&self) -> Result<Array2<f32>, String> {
         let mut data = vec![0.0f32; self.shape.0 * self.shape.1];
         self.buffer.read(&mut data).enq().map_err(|e| e.to_string())?;
-        Ok(Array2::from_shape_vec(self.shape, data).unwrap())
+        Array2::from_shape_vec(self.shape, data)
+            .map_err(|e| format!("Failed to create array from GPU data: {}", e))
     }
     
     /// Get shape
