@@ -98,6 +98,10 @@ pub mod parallel;
 pub mod tensorboard;
 pub mod gpu;
 pub mod tutorials;
+#[cfg(feature = "belief-states")]
+pub mod belief;
+#[cfg(feature = "multi-agent")]
+pub mod multi_agent;
 
 #[cfg(feature = "python")]
 pub mod bindings;

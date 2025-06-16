@@ -60,3 +60,9 @@ pub mod traits;
 // Re-export the DqnAgent from the implementation
 mod dqn;
 pub use dqn::{DqnAgent, DqnAgentBuilder};
+
+// Action masking support
+#[cfg(feature = "action-masking")]
+pub mod masked_agent;
+#[cfg(feature = "action-masking")]
+pub use masked_agent::MaskedAgent;
