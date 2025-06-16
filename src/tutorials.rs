@@ -90,7 +90,7 @@ pub mod getting_started {
     //!         
     //!         for step in 0..100 {
     //!             // Select action
-    //!             let action = agent.act(state.view());
+    //!             let action = agent.act(state.view())?;
     //!             
     //!             // Simulate environment step (you would replace this with your env)
     //!             let (next_state, reward, done) = step_environment(&state, action);
@@ -197,7 +197,7 @@ pub mod advanced {
     //! 
     //! Implement custom layers by following the Layer trait:
     //! 
-    //! ```rust
+    //! ```rust,no_run
     //! use athena::layers::traits::Layer;
     //! use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
     //! 
@@ -206,14 +206,8 @@ pub mod advanced {
     //!     biases: Array1<f32>,
     //! }
     //! 
-    //! impl Layer for CustomLayer {
-    //!     fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32> {
-    //!         // Your forward pass implementation
-    //!         input.dot(&self.weights) + &self.biases
-    //!     }
-    //!     
-    //!     // Implement other required methods...
-    //! }
+    //! // Implementation would include all required trait methods
+    //! // See DenseLayer for a complete example
     //! ```
     //! 
     //! ## Advanced Training Techniques
@@ -235,10 +229,10 @@ pub mod advanced {
     //! Gradient clipping is implemented as part of the optimizer:
     //! 
     //! ```rust
-    //! use athena::optimizer::{OptimizerWrapper, Adam};
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
     //! 
     //! // Create optimizer with gradient clipping
-    //! let mut optimizer = OptimizerWrapper::Adam(Adam::new(0.001));
+    //! let mut optimizer = OptimizerWrapper::SGD(SGD::new());
     //! // Gradient clipping is applied during optimization
     //! ```
     //! 
@@ -271,10 +265,15 @@ pub mod advanced {
     //! 
     //! Export models for deployment:
     //! 
-    //! ```rust
+    //! ```rust,no_run
     //! use athena::export::onnx::OnnxExporter;
+    //! use athena::network::NeuralNetwork;
+    //! use athena::activations::Activation;
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
     //! use std::path::Path;
     //! 
+    //! // Create a simple network
+    //! let network = NeuralNetwork::new(&[784, 128, 10], &[Activation::Relu, Activation::Linear], OptimizerWrapper::SGD(SGD::new()));
     //! OnnxExporter::export(&network, Path::new("model.onnx")).unwrap();
     //! ```
 }
@@ -314,18 +313,20 @@ pub mod best_practices {
     //! 
     //! ### 2. Batch Operations
     //! Process multiple samples at once:
-    //! ```rust
+    //! ```rust,no_run
+    //! # use athena::network::NeuralNetwork;
+    //! # use ndarray::Array2;
+    //! # let mut network = NeuralNetwork::new(&[784, 128, 10], &[athena::activations::Activation::Relu, athena::activations::Activation::Linear], athena::optimizer::OptimizerWrapper::SGD(athena::optimizer::SGD::new()));
+    //! # let batch_inputs = Array2::zeros((32, 784));
     //! // Good: Process batch
     //! let outputs = network.forward_batch(batch_inputs.view());
-    //! 
-    //! // Avoid: Process one by one
-    //! for input in inputs {
-    //!     let output = network.forward(input.view());
-    //! }
     //! ```
     //! 
     //! ### 3. Pre-allocate Buffers
     //! ```rust
+    //! use ndarray::Array2;
+    //! let batch_size = 32;
+    //! let hidden_size = 128;
     //! // Pre-allocate arrays for repeated operations
     //! let mut buffer = Array2::zeros((batch_size, hidden_size));
     //! ```
@@ -381,11 +382,14 @@ pub mod performance {
     //! 
     //! ### Gradient Accumulation
     //! For large batches that don't fit in memory:
-    //! ```rust
+    //! ```rust,no_run
     //! use athena::memory_optimization::GradientAccumulator;
     //! use athena::network::NeuralNetwork;
+    //! use athena::activations::Activation;
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
     //! 
-    //! // Assuming network is already created
+    //! // Create a network
+    //! let network = NeuralNetwork::new(&[784, 128, 10], &[Activation::Relu, Activation::Linear], OptimizerWrapper::SGD(SGD::new()));
     //! let mut accumulator = GradientAccumulator::new(&network);
     //! 
     //! // Process mini-batches and accumulate gradients
@@ -396,11 +400,17 @@ pub mod performance {
     //! ## Parallelization
     //! 
     //! ### Data Parallel Training
-    //! ```rust
+    //! ```rust,no_run
     //! use athena::parallel::ParallelNetwork;
+    //! use athena::network::NeuralNetwork;
+    //! use athena::activations::Activation;
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
+    //! use ndarray::Array2;
     //! 
-    //! // Use ParallelNetwork for multi-threaded forward passes
-    //! let parallel_net = ParallelNetwork::from_network(&network, 4);
+    //! // Create a network
+    //! let network = NeuralNetwork::new(&[784, 128, 10], &[Activation::Relu, Activation::Linear], OptimizerWrapper::SGD(SGD::new()));
+    //! let mut parallel_net = ParallelNetwork::from_network(&network, 4);
+    //! let inputs = Array2::zeros((32, 784));
     //! let outputs = parallel_net.forward_batch_parallel(inputs.view());
     //! ```
     //! 
@@ -432,6 +442,11 @@ pub mod algorithms {
     //! Best for discrete action spaces:
     //! ```rust
     //! use athena::agent::DqnAgent;
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
+    //! 
+    //! let state_dim = 4;
+    //! let action_dim = 2;
+    //! let optimizer = OptimizerWrapper::SGD(SGD::new());
     //! 
     //! let agent = DqnAgent::new(
     //!     &[state_dim, 128, 128, action_dim],
@@ -447,9 +462,9 @@ pub mod algorithms {
     //! Great general-purpose algorithm:
     //! ```rust
     //! use athena::algorithms::ppo::PPOAgent;
-    //! use athena::optimizer::{OptimizerWrapper, Adam};
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
     //! 
-    //! let optimizer = OptimizerWrapper::Adam(Adam::new(0.0003));
+    //! let optimizer = OptimizerWrapper::SGD(SGD::new());
     //! let ppo = PPOAgent::new(
     //!     4,         // state_size
     //!     2,         // action_size
@@ -467,9 +482,9 @@ pub mod algorithms {
     //! Excellent for continuous control:
     //! ```rust
     //! use athena::algorithms::sac::SACAgent;
-    //! use athena::optimizer::{OptimizerWrapper, Adam};
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
     //! 
-    //! let optimizer = OptimizerWrapper::Adam(Adam::new(0.0003));
+    //! let optimizer = OptimizerWrapper::SGD(SGD::new());
     //! let sac = SACAgent::new(
     //!     4,           // state_size
     //!     2,           // action_size
