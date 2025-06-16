@@ -6,8 +6,6 @@
 
 #[cfg(feature = "action-masking")]
 use athena::agent::{DqnAgent, MaskedAgent};
-use athena::optimizer::{SGD, OptimizerWrapper};
-use athena::replay_buffer::{ReplayBuffer, Experience};
 use ndarray::{Array1, array};
 use rand::Rng;
 

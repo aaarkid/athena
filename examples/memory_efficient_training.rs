@@ -10,7 +10,7 @@ use athena::network::NeuralNetwork;
 use athena::activations::Activation;
 use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::memory_optimization::{
-    GradientAccumulator, SparseLayer, ChunkedBatchProcessor, ArrayPool, InPlaceOps
+    GradientAccumulator, SparseLayer, ChunkedBatchProcessor, ArrayPool
 };
 use athena::metrics::MetricsTracker;
 use ndarray::{Array1, Array2};

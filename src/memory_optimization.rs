@@ -3,7 +3,7 @@
 //! This module provides various memory optimization techniques to reduce
 //! memory footprint and improve cache efficiency in neural networks.
 
-use ndarray::{Array1, Array2, Array4, ArrayView1, ArrayView2, s};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, s};
 use std::mem;
 use crate::network::NeuralNetwork;
 use crate::layers::Layer;

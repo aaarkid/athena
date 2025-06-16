@@ -7,8 +7,8 @@
 //! - Training monitoring and visualization
 //! - Model checkpointing
 
-use athena::algorithms::{PPOAgent, PPOBuilder};
-use athena::optimizer::{OptimizerWrapper, Adam, LearningRateScheduler};
+use athena::algorithms::PPOBuilder;
+use athena::optimizer::{OptimizerWrapper, LearningRateScheduler};
 use athena::metrics::MetricsTracker;
 use ndarray::{Array1, Array2, array};
 use rand::Rng;

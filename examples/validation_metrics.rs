@@ -2,7 +2,7 @@ use athena::network::NeuralNetwork;
 use athena::activations::Activation;
 use athena::optimizer::{OptimizerWrapper, Adam};
 use athena::layers::Layer;
-use athena::metrics::{ValidationSet, ClassificationMetrics, RegressionMetrics, ExtendedMetricsTracker};
+use athena::metrics::{ClassificationMetrics, RegressionMetrics, ExtendedMetricsTracker};
 use ndarray::array;
 
 fn main() {

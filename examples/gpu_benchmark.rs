@@ -170,6 +170,7 @@ fn benchmark_gpu_optimized_network(gpu_backend: Arc<GpuBackend>) -> Result<(), S
 
 // Additional benchmarking utilities
 #[cfg(feature = "gpu")]
+#[allow(dead_code)]
 fn measure_memory_transfer_overhead(gpu_backend: &GpuBackend, size: usize) -> Result<f32, String> {
     let data = Array2::from_shape_fn((size, size), |_| rand::random::<f32>());
     

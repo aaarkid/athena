@@ -5,8 +5,6 @@
 
 #[cfg(feature = "belief-states")]
 use athena::belief::{BeliefState, HistoryBelief, ParticleFilter, BeliefDqnAgent};
-use athena::agent::DqnAgent;
-use athena::optimizer::{SGD, OptimizerWrapper};
 use ndarray::Array1;
 use rand::Rng;
 

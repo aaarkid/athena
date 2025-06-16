@@ -4,7 +4,7 @@ use athena::activations::Activation;
 use athena::optimizer::{OptimizerWrapper, Adam, SGD};
 use athena::agent::DqnAgent;
 use athena::replay_buffer::{ReplayBuffer, Experience};
-use athena::algorithms::{a2c::A2CAgent, ppo::PPOAgent, sac::SACAgent, td3::TD3Agent};
+use athena::algorithms::{ppo::PPOAgent, sac::SACAgent};
 use ndarray::{Array1, Array2};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;

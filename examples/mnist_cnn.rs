@@ -6,16 +6,12 @@
 //! - Data augmentation techniques
 //! - Batch normalization in CNNs
 
-use athena::network::NeuralNetwork;
 use athena::layers::{Layer, LayerTrait, DenseLayer, Conv2DLayer, MaxPool2DLayer, GlobalAvgPoolLayer, BatchNormLayer, DropoutLayer};
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::metrics::MetricsTracker;
-use ndarray::{Array1, Array2, Array3, Array4, ArrayView1, ArrayView4, Axis, s};
+use ndarray::{Array2, Array4, ArrayView1, ArrayView4, s};
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::fs::File;
-use std::io::{Read, Write};
 
 /// Helper function to find argmax of an array
 fn argmax(arr: ArrayView1<f32>) -> usize {
