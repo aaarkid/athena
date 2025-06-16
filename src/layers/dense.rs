@@ -82,8 +82,7 @@ impl LayerTrait for DenseLayer {
     fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
         let output_error = output_error.insert_axis(Axis(0));
         let (_adjusted_error, weight_gradients, bias_gradients) = self.backward_batch(output_error.view());
-        let shape = bias_gradients.shape()[1];
-        (weight_gradients, bias_gradients.into_shape((shape,)).expect("Failed to reshape bias gradients"))
+        (weight_gradients, bias_gradients)
     }
 
     fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {

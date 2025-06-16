@@ -28,6 +28,7 @@ wasm = ["wasm-bindgen", "serde-wasm-bindgen", "console_error_panic_hook"]
 tempfile = "3.0"
 num_cpus = "1.16"
 criterion = "0.5"
+proptest = "1.4"
 
 [lib]
 name = "athena"

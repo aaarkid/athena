@@ -73,6 +73,9 @@ pub mod dropout;
 pub mod initialization;
 pub mod conv;
 pub mod pooling;
+pub mod lstm;
+pub mod gru;
+pub mod embedding;
 
 pub use traits::Layer as LayerTrait;
 pub use dense::{DenseLayer, Layer};
@@ -81,3 +84,6 @@ pub use dropout::DropoutLayer;
 pub use initialization::WeightInit;
 pub use conv::{Conv1DLayer, Conv2DLayer, Conv2DLayerBuilder};
 pub use pooling::{MaxPool1DLayer, MaxPool2DLayer, AvgPool2DLayer, GlobalAvgPoolLayer};
+pub use lstm::{LSTMLayer, LSTMGradients};
+pub use gru::{GRULayer, GRUGradients};
+pub use embedding::EmbeddingLayer;
