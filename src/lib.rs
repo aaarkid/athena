@@ -5,6 +5,29 @@
 //! and training deep neural networks, implementing various RL algorithms, and deploying
 //! models across different platforms.
 //! 
+//! ## 📚 Documentation Hub
+//! 
+//! ### 🚀 Getting Started
+//! - **[Tutorials](crate::tutorials)** - Comprehensive guides and examples
+//! - **[Getting Started Guide](crate::tutorials::getting_started)** - Your first agent
+//! - **[Examples](https://github.com/yourusername/athena/tree/main/examples)** - Working code samples
+//! 
+//! ### 🎯 Core Concepts
+//! - **[Neural Networks](crate::network)** - Flexible architecture
+//! - **[RL Agents](crate::agent)** - DQN and other agents
+//! - **[Algorithms](crate::algorithms)** - PPO, SAC, TD3, and more
+//! - **[Optimizers](crate::optimizer)** - Training optimization
+//! 
+//! ### 🔧 Advanced Topics
+//! - **[Advanced Tutorial](crate::tutorials::advanced)** - Custom layers and techniques
+//! - **[Performance Guide](crate::tutorials::performance)** - Optimization tips
+//! - **[GPU Acceleration](crate::gpu)** - Intel Arc and NVIDIA support
+//! - **[Best Practices](crate::tutorials::best_practices)** - Recommended patterns
+//! 
+//! ### 📖 Reference Guides
+//! - **[Algorithm Selection](crate::tutorials::algorithms)** - Choose the right algorithm
+//! - **[API Reference](#modules)** - Complete module documentation
+//! 
 //! ## Key Features
 //! 
 //! - **Neural Networks**: Flexible architecture with various layer types and activations
@@ -74,6 +97,7 @@ pub mod memory_optimization;
 pub mod parallel;
 pub mod tensorboard;
 pub mod gpu;
+pub mod tutorials;
 
 #[cfg(feature = "python")]
 pub mod bindings;
