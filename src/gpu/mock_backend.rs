@@ -1,7 +1,28 @@
 use ndarray::{Array2, ArrayView2};
-use super::{ComputeBackend, DeviceType};
 use std::time::Duration;
 use std::thread;
+
+#[cfg(feature = "gpu")]
+use super::{ComputeBackend, DeviceType};
+
+// Define traits locally when gpu feature is not enabled
+#[cfg(not(feature = "gpu"))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeviceType {
+    Cpu,
+    IntelGpu,
+    NvidiaGpu,
+    AmdGpu,
+}
+
+#[cfg(not(feature = "gpu"))]
+pub trait ComputeBackend {
+    fn matmul(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> Result<Array2<f32>, String>;
+    fn add(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> Result<Array2<f32>, String>;
+    fn multiply(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> Result<Array2<f32>, String>;
+    fn relu(&self, input: ArrayView2<f32>) -> Result<Array2<f32>, String>;
+    fn device_type(&self) -> DeviceType;
+}
 
 /// Mock GPU backend for demonstration when real GPU is not available
 pub struct MockGpuBackend {

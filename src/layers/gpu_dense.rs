@@ -1,21 +1,24 @@
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
+use crate::gpu::{ComputeBackend, MockGpuBackend};
 #[cfg(feature = "gpu")]
-use crate::gpu::{GpuBackend, ComputeBackend, MockGpuBackend};
+use crate::gpu::GpuBackend;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use crate::activations::Activation;
 use super::traits::Layer as LayerTrait;
 use super::initialization::WeightInit;
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use std::sync::{Arc, Mutex};
 
 /// Backend type for GPU acceleration
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 enum GpuBackendType {
+    #[cfg(feature = "gpu")]
     Real(Arc<Mutex<GpuBackend>>),
     Mock(Arc<Mutex<MockGpuBackend>>),
 }
 
 /// GPU-accelerated dense layer
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub struct GpuDenseLayer {
     pub weights: Array2<f32>,
     pub biases: Array1<f32>,
@@ -23,10 +26,11 @@ pub struct GpuDenseLayer {
     gpu_backend: Option<GpuBackendType>,
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 impl GpuDenseLayer {
     /// Create a new GPU-accelerated dense layer
     pub fn new(input_size: usize, output_size: usize, activation: Activation) -> Result<Self, String> {
+        #[cfg(feature = "gpu")]
         let gpu_backend = match GpuBackend::new() {
             Ok(backend) => Some(GpuBackendType::Real(Arc::new(Mutex::new(backend)))),
             Err(_) => {
@@ -34,6 +38,12 @@ impl GpuDenseLayer {
                 eprintln!("Using mock GPU backend for demonstration.");
                 Some(GpuBackendType::Mock(Arc::new(Mutex::new(MockGpuBackend::new()))))
             }
+        };
+        
+        #[cfg(all(feature = "gpu-mock", not(feature = "gpu")))]
+        let gpu_backend = {
+            eprintln!("Using mock GPU backend (gpu-mock feature).");
+            Some(GpuBackendType::Mock(Arc::new(Mutex::new(MockGpuBackend::new()))))
         };
         
         // Initialize weights using CPU
@@ -52,6 +62,7 @@ impl GpuDenseLayer {
     /// Get device info
     pub fn device_info(&self) -> Result<String, String> {
         match &self.gpu_backend {
+            #[cfg(feature = "gpu")]
             Some(GpuBackendType::Real(backend)) => backend.lock().unwrap().device_info(),
             Some(GpuBackendType::Mock(backend)) => backend.lock().unwrap().device_info(),
             None => Err("No GPU backend available".to_string()),
@@ -67,6 +78,7 @@ impl GpuDenseLayer {
                 
                 // Perform matrix multiplication on GPU
                 let z = match backend_type {
+                    #[cfg(feature = "gpu")]
                     GpuBackendType::Real(backend) => backend.lock().unwrap().matmul(input_2d, self.weights.view())?,
                     GpuBackendType::Mock(backend) => backend.lock().unwrap().matmul(input_2d, self.weights.view())?,
                 };
@@ -78,6 +90,7 @@ impl GpuDenseLayer {
                 match self.activation {
                     Activation::Relu => {
                         let activated = match backend_type {
+                            #[cfg(feature = "gpu")]
                             GpuBackendType::Real(backend) => backend.lock().unwrap().relu(z_with_bias.view())?,
                             GpuBackendType::Mock(backend) => backend.lock().unwrap().relu(z_with_bias.view())?,
                         };
@@ -101,6 +114,7 @@ impl GpuDenseLayer {
             Some(backend_type) => {
                 // Perform matrix multiplication on GPU
                 let z = match backend_type {
+                    #[cfg(feature = "gpu")]
                     GpuBackendType::Real(backend) => backend.lock().unwrap().matmul(inputs, self.weights.view())?,
                     GpuBackendType::Mock(backend) => backend.lock().unwrap().matmul(inputs, self.weights.view())?,
                 };
@@ -112,6 +126,7 @@ impl GpuDenseLayer {
                 match self.activation {
                     Activation::Relu => {
                         match backend_type {
+                            #[cfg(feature = "gpu")]
                             GpuBackendType::Real(backend) => backend.lock().unwrap().relu(z_with_bias.view()),
                             GpuBackendType::Mock(backend) => backend.lock().unwrap().relu(z_with_bias.view()),
                         }
@@ -129,7 +144,7 @@ impl GpuDenseLayer {
     }
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 impl LayerTrait for GpuDenseLayer {
     fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32> {
         self.forward_gpu(input).unwrap_or_else(|e| {
@@ -211,5 +226,5 @@ impl LayerTrait for GpuDenseLayer {
 }
 
 // CPU fallback for when GPU feature is not enabled
-#[cfg(not(feature = "gpu"))]
+#[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
 pub type GpuDenseLayer = super::dense::DenseLayer;

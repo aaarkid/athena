@@ -21,10 +21,12 @@ Athena is a high-performance, easy-to-use QDN (Quantum Deep Neural) library writ
 ## Features
 
 - Customizable Neural Network architecture
-- Support for various activation functions
-- A simple DQN Agent implementation
+- Support for various activation functions (ReLU, Sigmoid, Tanh, etc.)
+- Advanced layer types: LSTM, GRU, Convolutional, BatchNorm, Dropout
+- Multiple RL algorithms: DQN, A2C, PPO, SAC, TD3
 - A Replay Buffer for experience replay
-- Different Optimizers (SGD, Adam)
+- Different Optimizers (SGD, Adam, RMSProp)
+- GPU acceleration support (Intel Arc priority via OpenCL)
 - Save and load trained Neural Networks
 - Parallelism support using Rayon and ndarray
 
@@ -35,7 +37,18 @@ Add the following to your `Cargo.toml`:
 ```toml
 [dependencies]
 athena = "0.1.0"
+
+# Optional features
+athena = { version = "0.1.0", features = ["gpu"] }      # Full GPU support (requires OpenCL)
+athena = { version = "0.1.0", features = ["gpu-mock"] }  # GPU API without OpenCL dependency
 ```
+
+### GPU Support Options
+
+- `gpu` - Full GPU acceleration with OpenCL (requires OpenCL drivers)
+- `gpu-mock` - GPU API with mock backend (no OpenCL required, useful for development)
+
+For Windows users having issues with OpenCL, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
 
 ## Usage
 

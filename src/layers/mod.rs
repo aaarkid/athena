@@ -76,6 +76,7 @@ pub mod pooling;
 pub mod lstm;
 pub mod gru;
 pub mod embedding;
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub mod gpu_dense;
 
 pub use traits::Layer as LayerTrait;
@@ -88,4 +89,5 @@ pub use pooling::{MaxPool1DLayer, MaxPool2DLayer, AvgPool2DLayer, GlobalAvgPoolL
 pub use lstm::{LSTMLayer, LSTMGradients};
 pub use gru::{GRULayer, GRUGradients};
 pub use embedding::EmbeddingLayer;
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub use gpu_dense::GpuDenseLayer;
