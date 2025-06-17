@@ -183,15 +183,15 @@ In this example, the agent learns to always move right in order to maximize its 
 
 ## Documentation
 
-Comprehensive documentation is available in the `docs/` directory:
+Comprehensive documentation is available:
 
+- [API Documentation](https://docs.rs/athena) - Full API reference (or run `cargo doc --open`)
+- [Project Status](PROJECT_STATUS.md) - Implementation status, examples, and roadmap
+- [COUP Analysis](COUP_ANALYSIS.md) - Counterfactual reasoning in multi-agent systems
+- [Multi-Agent Extension](MULTI_AGENT_EXTENSION_PLAN.md) - Detailed multi-agent RL plans
+
+### Tutorials (in `docs/` directory)
 - [Getting Started Tutorial](docs/tutorial_getting_started.md) - Learn the basics
 - [Advanced Tutorial](docs/tutorial_advanced.md) - Deep dive into advanced features
 - [Algorithms Guide](docs/algorithms_guide.md) - Overview of RL algorithms
 - [Performance Guide](docs/performance_guide.md) - Optimization tips
-- [API Documentation](https://docs.rs/athena) - Full API reference (or run `cargo doc --open`)
-
-For development plans and contributing:
-- [Implementation Status](IMPLEMENTATION_STATUS.md) - Current feature status
-- [Advanced Features Plan](ADVANCED_FEATURES_PLAN.md) - Research roadmap
-- [Future Enhancements](FUTURE_ENHANCEMENTS.md) - Planned improvements
