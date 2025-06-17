@@ -8,10 +8,10 @@
 //! - TD3
 
 use athena::agent::DqnAgent;
-use athena::algorithms::{PPOBuilder, SACBuilder};
+use athena::algorithms::{PPOBuilder, PPORolloutBuffer, SACBuilder, SACExperience};
 use athena::optimizer::{OptimizerWrapper, SGD};
 use athena::replay_buffer::ReplayBuffer;
-use ndarray::{Array1, Array2, array};
+use ndarray::{Array1, array};
 use std::time::Instant;
 use std::fs::File;
 use std::io::Write;
@@ -223,13 +223,14 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
         let mut rewards = Vec::new();
         let mut dones = Vec::new();
         let mut values = Vec::new();
+        let mut log_probs = Vec::new();
         
         let mut state = env.reset();
         let mut episode_rewards = Vec::new();
         let mut current_episode_reward = 0.0;
         
         for _ in 0..n_steps {
-            let (action, _, value) = agent.act(state.view()).unwrap();
+            let (action, log_prob, value) = agent.act(state.view()).unwrap();
             
             let continuous_action = array![(action as f32 - 0.5) * 2.0];
             let (next_state, reward, done) = env.step(&continuous_action);
@@ -239,6 +240,7 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
             rewards.push(reward);
             dones.push(done);
             values.push(value);
+            log_probs.push(log_prob);
             
             current_episode_reward += reward;
             state = next_state;
@@ -251,24 +253,29 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
             }
         }
         
-        // Get final value
-        let _final_value = agent.value.forward(state.view())[0];
+        // Create rollout buffer directly without unnecessary conversions
+        let mut rollout_buffer = PPORolloutBuffer::new();
+        let last_done = dones.last() == Some(&true);
+        let last_value = if last_done { 
+            0.0 
+        } else { 
+            agent.value.forward(state.view())[0]
+        };
         
-        // Convert to arrays
-        let _states_array = Array2::from_shape_vec(
-            (states.len(), 2),
-            states.into_iter().flatten().collect()
-        ).unwrap();
+        for i in 0..states.len() {
+            rollout_buffer.add(
+                states[i].clone(),
+                actions[i],
+                rewards[i],
+                values[i],
+                log_probs[i],
+                dones[i],
+            );
+        }
         
-        let _actions_array = Array1::from_vec(actions);
-        
-        let _rewards_array = Array1::from_vec(rewards);
-        let _dones_array = Array1::from_vec(dones.into_iter().map(|d| if d { 1.0 } else { 0.0 }).collect());
-        let _values_array = Array1::from_vec(values);
-        
-        // PPO training is complex - simplified for benchmark
-        // In practice, you'd use the PPO rollout buffer and proper training
-        // For now, we'll skip the actual training step
+        // Compute advantages and train
+        agent.compute_gae(&mut rollout_buffer, last_value);
+        let _ = agent.update(&rollout_buffer, 3e-4);
         
         // Track progress
         for ep_reward in episode_rewards {
@@ -345,10 +352,10 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
         .build()
         .unwrap();
     
-    let mut buffer = ReplayBuffer::new(100000);
     let mut env = MountainCar::new();
     let mut solved_episode = None;
     let mut recent_rewards = Vec::new();
+    let mut sac_experiences: Vec<SACExperience> = Vec::new();
     
     // Training loop
     for episode in 0..episodes {
@@ -368,21 +375,26 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
             let (next_state, reward, done) = env.step(&action);
             episode_reward += reward;
             
-            // Store experience (simplified - SAC needs continuous action storage)
-            buffer.add(athena::replay_buffer::Experience {
+            // Store continuous action experiences for SAC training
+            sac_experiences.push(athena::algorithms::SACExperience {
                 state: state.clone(),
-                action: 0,  // Placeholder
+                action: action.clone(),
                 reward,
                 next_state: next_state.clone(),
                 done,
             });
             
-            // Train
-            if buffer.len() >= 256 {
-                // SAC needs continuous action experiences - simplified for benchmark
-                // In practice, you'd need to adapt the replay buffer for continuous actions
-                let _batch = buffer.sample(256);
-                // Skipping actual training for this simplified benchmark
+            // Train SAC when we have enough experiences
+            if sac_experiences.len() >= 256 {
+                // Sample batch and train
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                let mut batch = sac_experiences.clone();
+                batch.shuffle(&mut rng);
+                batch.truncate(256);
+                
+                // SAC training with continuous actions
+                let _ = agent.update(&batch, 3e-4);
             }
             
             state = next_state;

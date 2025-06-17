@@ -7,7 +7,6 @@
 use athena::belief::{HistoryBelief, ParticleFilter, belief_agent::BeliefDqnAgent};
 use athena::agent::DqnAgent;
 use athena::optimizer::{OptimizerWrapper, SGD};
-use athena::replay_buffer::{ReplayBuffer, Experience};
 use ndarray::Array1;
 use rand::Rng;
 
@@ -164,9 +163,6 @@ fn main() {
     let mut total_rewards = Vec::new();
     let batch_size = 32;
     
-    // Create replay buffer
-    let mut replay_buffer = ReplayBuffer::new(10000);
-    
     for episode in 0usize..episodes {
         let mut obs = env.reset();
         agent.belief_agent.reset();
@@ -192,22 +188,17 @@ fn main() {
             }
         }
         
-        // Add experiences to replay buffer and train
-        for (s, a, r, ns, d) in &episode_experiences {
-            replay_buffer.add(Experience {
-                state: agent.belief_agent.encode_observation(s),
-                action: *a,
-                reward: *r,
-                next_state: agent.belief_agent.encode_observation(ns),
-                done: *d,
-            });
-        }
-        
-        // Train multiple times per episode if we have enough data
-        if replay_buffer.len() >= batch_size {
+        // Train on collected experiences using belief batch training
+        if episode_experiences.len() >= batch_size {
+            // Sample random batch from episode experiences
             for _ in 0..10 {
-                let experiences = replay_buffer.sample(batch_size);
-                let _ = agent.base_agent.train_on_batch(&experiences, 0.99, 0.001);
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                let mut batch = episode_experiences.clone();
+                batch.shuffle(&mut rng);
+                batch.truncate(batch_size);
+                
+                let _ = agent.train_on_belief_batch(&batch, 0.99, 0.001);
             }
         }
         
