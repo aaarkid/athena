@@ -244,7 +244,7 @@ impl LayerTrait for GpuDenseLayer {
     
     fn clone_box(&self) -> Box<dyn super::traits::Layer> {
         // For cloning, create a new GPU backend
-        if let Ok(new_layer) = Self::new(self.input_size(), self.output_size(), self.activation.clone()) {
+        if let Ok(new_layer) = Self::new(self.input_size(), self.output_size(), self.activation) {
             let mut cloned = Box::new(new_layer);
             cloned.weights = self.weights.clone();
             cloned.biases = self.biases.clone();
@@ -253,7 +253,7 @@ impl LayerTrait for GpuDenseLayer {
             cloned
         } else {
             // Fall back to CPU layer if GPU init fails
-            let mut cpu_layer = super::dense::DenseLayer::new(self.input_size(), self.output_size(), self.activation.clone());
+            let mut cpu_layer = super::dense::DenseLayer::new(self.input_size(), self.output_size(), self.activation);
             cpu_layer.weights = self.weights.clone();
             cpu_layer.biases = self.biases.clone();
             Box::new(cpu_layer)

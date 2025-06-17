@@ -252,19 +252,19 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
         }
         
         // Get final value
-        let final_value = agent.value.forward(state.view())[0];
+        let _final_value = agent.value.forward(state.view())[0];
         
         // Convert to arrays
-        let states_array = Array2::from_shape_vec(
+        let _states_array = Array2::from_shape_vec(
             (states.len(), 2),
             states.into_iter().flatten().collect()
         ).unwrap();
         
-        let actions_array = Array1::from_vec(actions);
+        let _actions_array = Array1::from_vec(actions);
         
-        let rewards_array = Array1::from_vec(rewards);
-        let dones_array = Array1::from_vec(dones.into_iter().map(|d| if d { 1.0 } else { 0.0 }).collect());
-        let values_array = Array1::from_vec(values);
+        let _rewards_array = Array1::from_vec(rewards);
+        let _dones_array = Array1::from_vec(dones.into_iter().map(|d| if d { 1.0 } else { 0.0 }).collect());
+        let _values_array = Array1::from_vec(values);
         
         // PPO training is complex - simplified for benchmark
         // In practice, you'd use the PPO rollout buffer and proper training
