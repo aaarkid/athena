@@ -3,10 +3,10 @@
 //! CartPole is simpler and trains much faster than Mountain Car
 
 use athena::agent::DqnAgent;
-use athena::algorithms::{PPOBuilder, PPORolloutBuffer, SACBuilder, SACExperience};
+use athena::algorithms::{PPOBuilder, PPORolloutBuffer, SACBuilder, SACExperience, A2CBuilder, A2CExperience, TD3Builder, TD3Experience};
 use athena::optimizer::{OptimizerWrapper, SGD, Adam};
 use athena::replay_buffer::{ReplayBuffer, Experience};
-use ndarray::{Array1, array};
+use ndarray::Array1;
 use rand::Rng;
 use std::time::Instant;
 
@@ -281,6 +281,101 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
     }
 }
 
+/// Run A2C benchmark
+fn benchmark_a2c(episodes: usize) -> BenchmarkResult {
+    let start = Instant::now();
+    let mut env = CartPole::new();
+    
+    // Create A2C agent
+    let optimizer = OptimizerWrapper::Adam(Adam::default(&[]));
+    let mut agent = A2CBuilder::new(4, 2)  // 2 discrete actions
+        .hidden_sizes(vec![64, 64])
+        .optimizer(optimizer)
+        .gamma(0.99)
+        .n_steps(5)
+        .entropy_coeff(0.01)
+        .value_coeff(0.5)
+        .build()
+        .unwrap();
+    
+    let mut episode_rewards = Vec::new();
+    let mut solved_episode = None;
+    let mut experiences: Vec<A2CExperience> = Vec::new();
+    
+    for episode in 0..episodes {
+        let mut state = env.reset();
+        let mut episode_reward = 0.0;
+        let mut episode_experiences = Vec::new();
+        
+        for _ in 0..200 {
+            let value = agent.get_value(state.view());
+            let (action, log_prob) = agent.act(state.view()).unwrap();
+            let (next_state, reward, done) = env.step(action);
+            episode_reward += reward;
+            
+            episode_experiences.push(A2CExperience {
+                state: state.clone(),
+                action,
+                reward,
+                next_state: next_state.clone(),
+                done,
+                log_prob,
+                value,
+            });
+            
+            state = next_state;
+            if done { break; }
+        }
+        
+        experiences.extend(episode_experiences);
+        
+        // Train when we have enough experiences
+        if experiences.len() >= agent.n_steps * 4 {
+            let _ = agent.train(&experiences, 3e-4);
+            experiences.clear();
+        }
+        
+        episode_rewards.push(episode_reward);
+        
+        // Check if solved (average reward > 190 over 100 episodes)
+        if episode >= 100 && solved_episode.is_none() {
+            let avg_reward: f32 = episode_rewards[episode-99..=episode].iter().sum::<f32>() / 100.0;
+            if avg_reward >= 190.0 {
+                solved_episode = Some(episode);
+            }
+        }
+        
+        // Progress tracking
+        if episode % 50 == 0 {
+            println!("A2C Episode {}/{}", episode, episodes);
+        }
+    }
+    
+    let training_time = start.elapsed();
+    
+    // Measure inference time
+    let inference_start = Instant::now();
+    let state = env.reset();
+    for _ in 0..1000 {
+        let _ = agent.act(state.view());
+    }
+    let inference_time = inference_start.elapsed() / 1000;
+    
+    let final_avg_reward = if episode_rewards.len() >= 100 {
+        episode_rewards.iter().rev().take(100).sum::<f32>() / 100.0
+    } else {
+        episode_rewards.iter().sum::<f32>() / episode_rewards.len() as f32
+    };
+    
+    BenchmarkResult {
+        algorithm: "A2C".to_string(),
+        episodes_to_solve: solved_episode,
+        final_avg_reward,
+        training_time_ms: training_time.as_millis(),
+        inference_time_us: inference_time.as_micros(),
+    }
+}
+
 /// Run SAC benchmark
 fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     let start = Instant::now();
@@ -380,6 +475,106 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     }
 }
 
+/// Run TD3 benchmark
+fn benchmark_td3(episodes: usize) -> BenchmarkResult {
+    let start = Instant::now();
+    let mut env = CartPole::new();
+    
+    // Create TD3 agent
+    let optimizer = OptimizerWrapper::Adam(Adam::default(&[]));
+    let mut agent = TD3Builder::new(4, 1)  // 1 continuous action
+        .hidden_sizes(vec![64, 64])
+        .optimizer(optimizer)
+        .gamma(0.99)
+        .tau(0.005)
+        .policy_delay(2)
+        .action_bounds(-1.0, 1.0)
+        .noise_params(0.2, 0.5, 0.1)
+        .build()
+        .unwrap();
+    
+    let mut episode_rewards = Vec::new();
+    let mut solved_episode = None;
+    let mut td3_experiences: Vec<TD3Experience> = Vec::new();
+    
+    for episode in 0..episodes {
+        let mut state = env.reset();
+        let mut episode_reward = 0.0;
+        
+        for _ in 0..200 {
+            let action = agent.act(state.view(), false).unwrap();
+            let (next_state, reward, done) = env.step_continuous(&action);
+            episode_reward += reward;
+            
+            td3_experiences.push(TD3Experience {
+                state: state.clone(),
+                action: action.clone(),
+                reward,
+                next_state: next_state.clone(),
+                done,
+            });
+            
+            // Train when we have enough experiences
+            if td3_experiences.len() >= 256 {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                let mut batch = td3_experiences.clone();
+                batch.shuffle(&mut rng);
+                batch.truncate(256);
+                
+                let _ = agent.update(&batch, 3e-4, 3e-4);
+                
+                // Keep buffer size manageable
+                if td3_experiences.len() > 10000 {
+                    td3_experiences.drain(0..5000);
+                }
+            }
+            
+            state = next_state;
+            if done { break; }
+        }
+        
+        episode_rewards.push(episode_reward);
+        
+        // Check if solved
+        if episode >= 100 && solved_episode.is_none() {
+            let avg_reward: f32 = episode_rewards[episode-99..=episode].iter().sum::<f32>() / 100.0;
+            if avg_reward >= 190.0 {
+                solved_episode = Some(episode);
+            }
+        }
+        
+        // Progress tracking
+        if episode % 50 == 0 {
+            println!("TD3 Episode {}/{}", episode, episodes);
+        }
+    }
+    
+    let training_time = start.elapsed();
+    
+    // Measure inference time
+    let inference_start = Instant::now();
+    let state = env.reset();
+    for _ in 0..1000 {
+        let _ = agent.act(state.view(), true);
+    }
+    let inference_time = inference_start.elapsed() / 1000;
+    
+    let final_avg_reward = if episode_rewards.len() >= 100 {
+        episode_rewards.iter().rev().take(100).sum::<f32>() / 100.0
+    } else {
+        episode_rewards.iter().sum::<f32>() / episode_rewards.len() as f32
+    };
+    
+    BenchmarkResult {
+        algorithm: "TD3".to_string(),
+        episodes_to_solve: solved_episode,
+        final_avg_reward,
+        training_time_ms: training_time.as_millis(),
+        inference_time_us: inference_time.as_micros(),
+    }
+}
+
 fn main() {
     println!("CartPole Algorithm Comparison Benchmark");
     println!("======================================\n");
@@ -395,8 +590,14 @@ fn main() {
     println!("\nRunning SAC...");
     let sac_result = benchmark_sac(episodes);
     
+    println!("\nRunning A2C...");
+    let a2c_result = benchmark_a2c(episodes);
+    
+    println!("\nRunning TD3...");
+    let td3_result = benchmark_td3(episodes);
+    
     // Store results in a vector
-    let results = vec![dqn_result, ppo_result, sac_result];
+    let results = vec![dqn_result, a2c_result, ppo_result, sac_result, td3_result];
     
     // Print results
     println!("\n\nResults:");
