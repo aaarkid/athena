@@ -4,7 +4,10 @@
 //! observable version of GridWorld where the agent can only see nearby cells.
 
 #[cfg(feature = "belief-states")]
-use athena::belief::{BeliefState, HistoryBelief, ParticleFilter, BeliefDqnAgent};
+use athena::belief::{HistoryBelief, ParticleFilter, belief_agent::BeliefDqnAgent};
+use athena::agent::DqnAgent;
+use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::replay_buffer::{ReplayBuffer, Experience};
 use ndarray::Array1;
 use rand::Rng;
 
@@ -21,10 +24,14 @@ impl POGridWorld {
     fn new(size: usize) -> Self {
         let mut rng = rand::thread_rng();
         
-        // Random obstacles
+        // Fewer obstacles to make it easier
         let mut obstacles = Vec::new();
-        for _ in 0..size {
-            obstacles.push((rng.gen_range(0..size), rng.gen_range(0..size)));
+        for _ in 0..size/2 {
+            let pos = (rng.gen_range(1..size-1), rng.gen_range(1..size-1));
+            // Don't place obstacles at start or goal
+            if pos != (0, 0) && pos != (size-1, size-1) {
+                obstacles.push(pos);
+            }
         }
         
         Self {
@@ -66,11 +73,16 @@ impl POGridWorld {
             self.agent_pos = new_pos;
         }
         
-        // Calculate reward
+        // Calculate reward with better structure
         let reward = if self.agent_pos == self.goal_pos {
-            10.0
+            100.0 // Big reward for reaching goal
         } else {
-            -0.1 // Small penalty for each step
+            let (gx, gy) = self.goal_pos;
+            let old_dist = ((x as f32 - gx as f32).powi(2) + (y as f32 - gy as f32).powi(2)).sqrt();
+            let new_dist = ((new_pos.0 as f32 - gx as f32).powi(2) + (new_pos.1 as f32 - gy as f32).powi(2)).sqrt();
+            
+            // Reward for getting closer to goal, penalty for moving away
+            (old_dist - new_dist) * 0.1 - 0.01
         };
         
         let done = self.agent_pos == self.goal_pos;
@@ -120,8 +132,8 @@ fn main() {
     println!("Belief State Tracking Example");
     println!("=============================");
     
-    // Create environment
-    let mut env = POGridWorld::new(10);
+    // Create environment - smaller for easier learning
+    let mut env = POGridWorld::new(6);
     
     // Create base DQN agent
     let observation_size = (2 * env.observation_radius + 1).pow(2) * 3;
@@ -129,7 +141,7 @@ fn main() {
     let optimizer = OptimizerWrapper::SGD(SGD::new());
     let base_agent = DqnAgent::new(
         &[belief_encoding_size, 128, 128, 4], // 4 actions
-        0.1,
+        1.0, // Start with high exploration
         optimizer,
         10000,
         true,
@@ -147,9 +159,13 @@ fn main() {
     );
     
     // Training parameters
-    let episodes = 200;
-    let max_steps = 100;
+    let episodes = 500;
+    let max_steps = 200; // Give more time to find goal
     let mut total_rewards = Vec::new();
+    let batch_size = 32;
+    
+    // Create replay buffer
+    let mut replay_buffer = ReplayBuffer::new(10000);
     
     for episode in 0usize..episodes {
         let mut obs = env.reset();
@@ -158,7 +174,7 @@ fn main() {
         let mut episode_reward = 0.0;
         let mut episode_experiences = Vec::new();
         
-        for step in 0..max_steps {
+        for _step in 0..max_steps {
             // Get action from belief-based agent
             let action = agent.act(&obs).unwrap();
             
@@ -176,15 +192,34 @@ fn main() {
             }
         }
         
-        // Train on episode experiences
-        if episode_experiences.len() > 10 {
-            agent.train_on_belief_batch(&episode_experiences, 0.99, 0.001).unwrap();
+        // Add experiences to replay buffer and train
+        for (s, a, r, ns, d) in &episode_experiences {
+            replay_buffer.add(Experience {
+                state: agent.belief_agent.encode_observation(s),
+                action: *a,
+                reward: *r,
+                next_state: agent.belief_agent.encode_observation(ns),
+                done: *d,
+            });
+        }
+        
+        // Train multiple times per episode if we have enough data
+        if replay_buffer.len() >= batch_size {
+            for _ in 0..10 {
+                let experiences = replay_buffer.sample(batch_size);
+                let _ = agent.base_agent.train_on_batch(&experiences, 0.99, 0.001);
+            }
+        }
+        
+        // Update target network periodically
+        if episode % 10 == 0 {
+            agent.base_agent.update_target_network();
         }
         
         total_rewards.push(episode_reward);
         
-        // Decay epsilon
-        agent.base_agent.epsilon = (agent.base_agent.epsilon * 0.99).max(0.01);
+        // Decay epsilon more aggressively
+        agent.base_agent.epsilon = (agent.base_agent.epsilon * 0.995).max(0.05);
         
         if episode % 20 == 0 {
             let avg_reward: f32 = total_rewards.iter()

@@ -6,6 +6,8 @@
 
 #[cfg(feature = "action-masking")]
 use athena::agent::{DqnAgent, MaskedAgent};
+use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::replay_buffer::{ReplayBuffer, Experience};
 use ndarray::{Array1, array};
 use rand::Rng;
 
@@ -154,7 +156,7 @@ fn main() {
             // Train agent
             if buffer.len() >= batch_size && total_steps % update_frequency == 0 {
                 let batch = buffer.sample(batch_size);
-                agent.train_on_batch(&batch, 0.99, 0.001);
+                let _ = agent.train_on_batch(&batch, 0.99, 0.001);
             }
             
             // Update target network
