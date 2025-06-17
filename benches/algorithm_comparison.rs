@@ -338,6 +338,7 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
 fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     println!("\nBenchmarking SAC...");
     let start = Instant::now();
+    let mut last_print = Instant::now();
     
     // Create SAC agent
     let optimizer = OptimizerWrapper::SGD(SGD::new());
@@ -361,6 +362,11 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     for episode in 0..episodes {
         let mut state = env.reset();
         let mut episode_reward = 0.0;
+        
+        // Progress tracking
+        if episode % 50 == 0 {
+            println!("SAC Episode {}/{}, experiences: {}", episode, episodes, sac_experiences.len());
+        }
         
         loop {
             // Select action
@@ -389,12 +395,23 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
                 // Sample batch and train
                 use rand::seq::SliceRandom;
                 let mut rng = rand::thread_rng();
-                let mut batch = sac_experiences.clone();
-                batch.shuffle(&mut rng);
-                batch.truncate(256);
+                
+                // Sample without cloning the entire buffer
+                let indices: Vec<usize> = (0..sac_experiences.len()).collect();
+                let sampled_indices: Vec<_> = indices.choose_multiple(&mut rng, 256).cloned().collect();
+                
+                let batch: Vec<SACExperience> = sampled_indices
+                    .iter()
+                    .map(|&i| sac_experiences[i].clone())
+                    .collect();
                 
                 // SAC training with continuous actions
                 let _ = agent.update(&batch, 3e-4);
+                
+                // Keep buffer size manageable
+                if sac_experiences.len() > 10000 {
+                    sac_experiences.drain(0..5000);
+                }
             }
             
             state = next_state;
