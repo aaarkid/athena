@@ -80,7 +80,7 @@ fn main() {
     
     // Test 4: Memory usage
     println!("\n4. Memory Efficiency:");
-    let buffer = ReplayBuffer::new(100_000);
+    let _buffer = ReplayBuffer::new(100_000);
     println!("   Replay Buffer (100k): ~{:.1} MB", (100_000 * state_size * 2 * 4) as f64 / 1024.0 / 1024.0);
     
     let big_network_params = [1024, 512, 512, 256, 128].windows(2)

@@ -27,6 +27,7 @@ fn argmax(arr: ArrayView1<f32>) -> usize {
 }
 
 /// CNN architecture for MNIST
+#[allow(dead_code)]
 struct ConvNet {
     // Convolutional layers
     conv1: Conv2DLayer,
@@ -96,7 +97,7 @@ impl ConvNet {
         // Flatten the input for a simple fully connected network
         let batch_size = input.shape()[0];
         let flattened_size = input.shape()[1] * input.shape()[2] * input.shape()[3];
-        let flattened = input.clone().into_shape((batch_size, flattened_size)).unwrap();
+        let _flattened = input.clone().into_shape((batch_size, flattened_size)).unwrap();
         
         // Simple placeholder - in reality you'd use proper CNN layers
         // This is just to make the example compile
@@ -113,6 +114,7 @@ impl ConvNet {
 }
 
 /// Extension to BatchNormLayer for 4D inputs
+#[allow(dead_code)]
 trait BatchNormExt {
     fn forward_batch_4d(&mut self, input: ArrayView4<f32>, training: bool) -> Array4<f32>;
 }
@@ -318,7 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Training configuration
     let batch_size = 32;
     let epochs = 10;
-    let learning_rate = 0.001;
+    let _learning_rate = 0.001;
     let mut metrics = MetricsTracker::new(2, 1000);  // 2 FC layers, 1000 history
     let mut rng = rand::thread_rng();
     

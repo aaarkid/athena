@@ -31,14 +31,14 @@ fn main() -> std::io::Result<()> {
     
     // Training loop with logging
     println!("Training and logging metrics...");
-    let rng = rand::thread_rng();
+    let _rng = rand::thread_rng();
     
     for epoch in 0..100 {
         let mut epoch_loss = 0.0;
         let mut epoch_accuracy = 0.0;
         
         // Generate synthetic data (sin function approximation)
-        for step in 0..50 {
+        for _step in 0..50 {
             let x1 = rand::random::<f32>() * 2.0 * PI;
             let x2 = rand::random::<f32>() * 2.0 * PI;
             let target = (x1.sin() + x2.cos()) / 2.0;

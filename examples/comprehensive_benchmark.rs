@@ -133,7 +133,7 @@ fn benchmark_rl_algorithms() {
     let start = Instant::now();
     for _ in 0..10 {
         let batch = buffer.sample(batch_size);
-        dqn.train_on_batch(&batch, 0.99, learning_rate);
+        let _ = dqn.train_on_batch(&batch, 0.99, learning_rate);
     }
     let dqn_time = start.elapsed();
     println!("DQN Agent: {:?} for 10 batches", dqn_time);
@@ -141,7 +141,7 @@ fn benchmark_rl_algorithms() {
     // PPO - Create with proper parameters
     let ppo_layers = &[state_size, 128, 128, action_size];
     let ppo_optimizer = OptimizerWrapper::Adam(Adam::new(&dqn_layers, 0.9, 0.999, 1e-8));
-    let ppo = PPOAgent::new(
+    let _ppo = PPOAgent::new(
         state_size,
         action_size,
         ppo_layers,
@@ -156,7 +156,7 @@ fn benchmark_rl_algorithms() {
     // SAC - Create with proper parameters  
     let sac_layers = &[state_size, 256, 256];
     let sac_optimizer = OptimizerWrapper::Adam(Adam::new(&dqn_layers[0..2], 0.9, 0.999, 1e-8));
-    let sac = SACAgent::new(
+    let _sac = SACAgent::new(
         state_size,
         action_size,
         sac_layers,
@@ -194,7 +194,7 @@ fn benchmark_memory() {
     // Replay buffer
     let buffer_size = 100_000;
     let state_size = 64;
-    let buffer = ReplayBuffer::new(buffer_size);
+    let _buffer = ReplayBuffer::new(buffer_size);
     let buffer_memory_mb = (buffer_size * state_size * 2 * 4) as f32 / (1024.0 * 1024.0);
     println!("\nReplay Buffer Capacity: {}", buffer_size);
     println!("Estimated Memory Usage: {:.2} MB", buffer_memory_mb);

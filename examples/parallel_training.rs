@@ -110,7 +110,7 @@ fn main() {
             .map(|env| {
                 let mut episode_experiences = Vec::new();
                 let mut state = env.reset();
-                let mut total_reward = 0.0;
+                let mut _total_reward = 0.0;
                 
                 loop {
                     // Epsilon-greedy action selection
@@ -131,7 +131,7 @@ fn main() {
                     };
                     
                     let (next_state, reward, done) = env.step(action);
-                    total_reward += reward;
+                    _total_reward += reward;
                     
                     episode_experiences.push(Experience {
                         state: state.clone(),
@@ -240,7 +240,7 @@ fn main() {
         // Decay epsilon
         epsilon = (epsilon * epsilon_decay).max(epsilon_end);
         
-        let episode_time = episode_start.elapsed();
+        let _episode_time = episode_start.elapsed();
         // Track episode completion
         metrics.start_episode();
         metrics.step(episode as f32);  // Just track something for now

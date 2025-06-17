@@ -224,11 +224,11 @@ fn main() {
 }
 
 /// Print memory usage statistics
-fn print_memory_stats(network: &NeuralNetwork, pool: &ArrayPool) {
+fn print_memory_stats(network: &NeuralNetwork, _pool: &ArrayPool) {
     let mut total_params = 0;
     let mut total_memory = 0;
     
-    for (i, layer) in network.layers.iter().enumerate() {
+    for layer in network.layers.iter() {
         let weight_params = layer.weights.len();
         let bias_params = layer.biases.len();
         let layer_params = weight_params + bias_params;
@@ -271,7 +271,7 @@ trait NetworkMemoryOps {
 }
 
 impl NetworkMemoryOps for NeuralNetwork {
-    fn backward_with_input(&self, input: ndarray::ArrayView1<f32>, error: ndarray::ArrayView1<f32>) 
+    fn backward_with_input(&self, _input: ndarray::ArrayView1<f32>, _error: ndarray::ArrayView1<f32>) 
         -> (Vec<Array2<f32>>, Vec<Array1<f32>>) 
     {
         // Simplified backward pass for demonstration
