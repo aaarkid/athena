@@ -1,11 +1,12 @@
-//! Faster CartPole benchmark comparing DQN with other algorithms
+//! CartPole benchmark comparing DQN, PPO, and SAC
 //! 
 //! CartPole is simpler and trains much faster than Mountain Car
 
 use athena::agent::DqnAgent;
-use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::algorithms::{PPOBuilder, PPORolloutBuffer, SACBuilder, SACExperience};
+use athena::optimizer::{OptimizerWrapper, SGD, Adam};
 use athena::replay_buffer::{ReplayBuffer, Experience};
-use ndarray::Array1;
+use ndarray::{Array1, array};
 use rand::Rng;
 use std::time::Instant;
 
@@ -78,6 +79,13 @@ impl CartPole {
         (state, reward, self.done)
     }
     
+    // Continuous action version for SAC
+    fn step_continuous(&mut self, action: &Array1<f32>) -> (Array1<f32>, f32, bool) {
+        // Convert continuous action [-1, 1] to discrete
+        let discrete_action = if action[0] > 0.0 { 1 } else { 0 };
+        self.step(discrete_action)
+    }
+    
     fn get_state(&self) -> Array1<f32> {
         Array1::from_vec(vec![self.x, self.x_dot, self.theta, self.theta_dot])
     }
@@ -147,6 +155,11 @@ fn benchmark_dqn(episodes: usize) -> BenchmarkResult {
                 solved_episode = Some(episode);
             }
         }
+        
+        // Progress tracking
+        if episode % 50 == 0 {
+            println!("DQN Episode {}/{}", episode, episodes);
+        }
     }
     
     let training_time = start.elapsed();
@@ -175,66 +188,77 @@ fn benchmark_dqn(episodes: usize) -> BenchmarkResult {
     }
 }
 
-/// Run DQN with different hyperparameters
-fn benchmark_dqn_tuned(episodes: usize) -> BenchmarkResult {
+/// Run PPO benchmark
+fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
     let start = Instant::now();
     let mut env = CartPole::new();
     
-    let optimizer = OptimizerWrapper::SGD(SGD::new());
-    let mut agent = DqnAgent::new(
-        &[4, 128, 64, 2], // Larger network
-        1.0, // epsilon
-        optimizer,
-        50, // More frequent target updates
-        true, // double DQN
-    );
+    // Create PPO agent
+    let optimizer = OptimizerWrapper::Adam(Adam::default(&[]));
+    let mut agent = PPOBuilder::new(4, 2)
+        .hidden_sizes(vec![64, 64])
+        .optimizer(optimizer)
+        .clip_param(0.2)
+        .ppo_epochs(10)
+        .build()
+        .unwrap();
     
-    let mut replay_buffer = ReplayBuffer::new(50000);
     let mut episode_rewards = Vec::new();
     let mut solved_episode = None;
     
-    for episode in 0..episodes {
-        let mut state = env.reset();
-        let mut episode_reward = 0.0;
+    // PPO uses batch collection
+    let rollout_size = 2048;
+    let mut total_episodes = 0;
+    
+    while total_episodes < episodes {
+        let mut rollout_buffer = PPORolloutBuffer::new();
+        let mut rollout_steps = 0;
         
-        for _ in 0..200 {
-            let action = agent.act(state.view()).unwrap();
-            let (next_state, reward, done) = env.step(action);
-            episode_reward += reward;
+        while rollout_steps < rollout_size && total_episodes < episodes {
+            let mut state = env.reset();
+            let mut episode_reward = 0.0;
             
-            replay_buffer.add(Experience {
-                state: state.clone(),
-                action,
-                reward,
-                next_state: next_state.clone(),
-                done,
-            });
-            
-            if replay_buffer.len() >= 64 {
-                let batch = replay_buffer.sample(64);
-                let _ = agent.train_on_batch(&batch, 0.99, 0.0005); // Lower learning rate
+            for _ in 0..200 {
+                let (action, log_prob, value) = agent.act(state.view()).unwrap();
+                let (next_state, reward, done) = env.step(action);
+                episode_reward += reward;
+                
+                rollout_buffer.add(state.clone(), action, reward, value, log_prob, done);
+                rollout_steps += 1;
+                
+                state = next_state;
+                if done { break; }
             }
             
-            state = next_state;
-            if done { break; }
+            episode_rewards.push(episode_reward);
+            total_episodes += 1;
+            
+            // Check if solved
+            if total_episodes >= 100 && solved_episode.is_none() {
+                let start_idx = total_episodes.saturating_sub(100);
+                let avg_reward: f32 = episode_rewards[start_idx..total_episodes].iter().sum::<f32>() / 100.0;
+                if avg_reward >= 195.0 {
+                    solved_episode = Some(total_episodes);
+                }
+            }
+            
+            // Progress tracking
+            if total_episodes % 50 == 0 {
+                println!("PPO Episode {}/{}", total_episodes, episodes);
+            }
         }
         
-        episode_rewards.push(episode_reward);
-        agent.epsilon = (agent.epsilon * 0.99).max(0.01); // Slower epsilon decay
-        
-        // Check if solved
-        if episode >= 100 && solved_episode.is_none() {
-            let avg_reward: f32 = episode_rewards[episode-99..=episode].iter().sum::<f32>() / 100.0;
-            if avg_reward >= 195.0 {
-                solved_episode = Some(episode);
-            }
+        // Train on collected rollout
+        if !rollout_buffer.is_empty() {
+            let last_value = agent.value.forward(env.get_state().view())[0];
+            agent.compute_gae(&mut rollout_buffer, last_value);
+            let _ = agent.update(&rollout_buffer, 3e-4);
         }
     }
     
     let training_time = start.elapsed();
     
     // Measure inference time
-    agent.epsilon = 0.0;
     let inference_start = Instant::now();
     let state = env.reset();
     for _ in 0..1000 {
@@ -249,7 +273,7 @@ fn benchmark_dqn_tuned(episodes: usize) -> BenchmarkResult {
     };
     
     BenchmarkResult {
-        algorithm: "DQN-Tuned".to_string(),
+        algorithm: "PPO".to_string(),
         episodes_to_solve: solved_episode,
         final_avg_reward,
         training_time_ms: training_time.as_millis(),
@@ -257,44 +281,99 @@ fn benchmark_dqn_tuned(episodes: usize) -> BenchmarkResult {
     }
 }
 
-/// Run baseline random agent
-fn benchmark_random(episodes: usize) -> BenchmarkResult {
+/// Run SAC benchmark
+fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     let start = Instant::now();
     let mut env = CartPole::new();
-    let mut rng = rand::thread_rng();
+    
+    // Create SAC agent
+    let optimizer = OptimizerWrapper::Adam(Adam::default(&[]));
+    let mut agent = SACBuilder::new(4, 1)  // 1 continuous action
+        .hidden_sizes(vec![64, 64])
+        .optimizer(optimizer)
+        .gamma(0.99)
+        .tau(0.005)
+        .alpha(0.2)
+        .auto_alpha(true)
+        .build()
+        .unwrap();
     
     let mut episode_rewards = Vec::new();
+    let mut solved_episode = None;
+    let mut sac_experiences: Vec<SACExperience> = Vec::new();
     
-    for _ in 0..episodes.min(100) { // Only run 100 episodes for random
-        let _ = env.reset();
+    for episode in 0..episodes {
+        let mut state = env.reset();
         let mut episode_reward = 0.0;
         
         for _ in 0..200 {
-            let action = rng.gen_range(0..2);
-            let (_, reward, done) = env.step(action);
+            let action = agent.act(state.view(), false).unwrap();
+            let (next_state, reward, done) = env.step_continuous(&action);
             episode_reward += reward;
             
+            sac_experiences.push(SACExperience {
+                state: state.clone(),
+                action: action.clone(),
+                reward,
+                next_state: next_state.clone(),
+                done,
+            });
+            
+            // Train when we have enough experiences
+            if sac_experiences.len() >= 256 {
+                use rand::seq::SliceRandom;
+                let mut rng = rand::thread_rng();
+                let mut batch = sac_experiences.clone();
+                batch.shuffle(&mut rng);
+                batch.truncate(256);
+                
+                let _ = agent.update(&batch, 3e-4);
+                
+                // Keep buffer size manageable
+                if sac_experiences.len() > 10000 {
+                    sac_experiences.drain(0..5000);
+                }
+            }
+            
+            state = next_state;
             if done { break; }
         }
         
         episode_rewards.push(episode_reward);
+        
+        // Check if solved
+        if episode >= 100 && solved_episode.is_none() {
+            let avg_reward: f32 = episode_rewards[episode-99..=episode].iter().sum::<f32>() / 100.0;
+            if avg_reward >= 195.0 {
+                solved_episode = Some(episode);
+            }
+        }
+        
+        // Progress tracking
+        if episode % 50 == 0 {
+            println!("SAC Episode {}/{}", episode, episodes);
+        }
     }
     
     let training_time = start.elapsed();
     
     // Measure inference time
     let inference_start = Instant::now();
-    let _state = env.reset();
+    let state = env.reset();
     for _ in 0..1000 {
-        let _ = rng.gen_range(0..2);
+        let _ = agent.act(state.view(), true);
     }
     let inference_time = inference_start.elapsed() / 1000;
     
-    let final_avg_reward = episode_rewards.iter().sum::<f32>() / episode_rewards.len() as f32;
+    let final_avg_reward = if episode_rewards.len() >= 100 {
+        episode_rewards.iter().rev().take(100).sum::<f32>() / 100.0
+    } else {
+        episode_rewards.iter().sum::<f32>() / episode_rewards.len() as f32
+    };
     
     BenchmarkResult {
-        algorithm: "Random".to_string(),
-        episodes_to_solve: None,
+        algorithm: "SAC".to_string(),
+        episodes_to_solve: solved_episode,
         final_avg_reward,
         training_time_ms: training_time.as_millis(),
         inference_time_us: inference_time.as_micros(),
@@ -307,20 +386,20 @@ fn main() {
     
     let episodes = 500;
     
-    println!("Running Random baseline...");
-    let random_result = benchmark_random(episodes);
-    
     println!("Running DQN...");
     let dqn_result = benchmark_dqn(episodes);
     
-    println!("Running DQN-Tuned...");
-    let dqn_tuned_result = benchmark_dqn_tuned(episodes);
+    println!("\nRunning PPO...");
+    let ppo_result = benchmark_ppo(episodes);
+    
+    println!("\nRunning SAC...");
+    let sac_result = benchmark_sac(episodes);
     
     // Store results in a vector
-    let results = vec![random_result, dqn_result, dqn_tuned_result];
+    let results = vec![dqn_result, ppo_result, sac_result];
     
     // Print results
-    println!("\nResults:");
+    println!("\n\nResults:");
     println!("--------");
     
     for result in &results {
@@ -336,40 +415,59 @@ fn main() {
     
     // Create comparison table
     println!("\n\nComparison Table:");
-    println!("| Algorithm  | Episodes to Solve | Final Avg Reward | Training Time (s) | Speedup |");
-    println!("|------------|-------------------|------------------|-------------------|---------|");
-    
-    let baseline_time = results[0].training_time_ms as f64; // Random is first
+    println!("| Algorithm | Episodes to Solve | Final Avg Reward | Training Time (s) | Inference Time (μs) |");
+    println!("|-----------|-------------------|------------------|-------------------|---------------------|");
     
     for result in &results {
         let episodes_str = match result.episodes_to_solve {
             Some(ep) => ep.to_string(),
             None => "Not solved".to_string(),
         };
-        let speedup = baseline_time / result.training_time_ms as f64;
-        println!("| {:10} | {:17} | {:16.2} | {:17.3} | {:7.2}x |",
+        println!("| {:9} | {:17} | {:16.2} | {:17.3} | {:19} |",
             result.algorithm,
             episodes_str,
             result.final_avg_reward,
             result.training_time_ms as f64 / 1000.0,
-            speedup
+            result.inference_time_us
         );
     }
     
     // Summary
-    println!("\nSummary:");
+    println!("\n\nSummary:");
     println!("--------");
-    if results[1].episodes_to_solve.is_some() || results[2].episodes_to_solve.is_some() {
-        println!("✓ DQN successfully learns to balance the CartPole");
+    
+    // Check which algorithms solved CartPole
+    let solved_algorithms: Vec<_> = results.iter()
+        .filter(|r| r.episodes_to_solve.is_some())
+        .collect();
+    
+    if !solved_algorithms.is_empty() {
+        println!("✓ The following algorithms successfully solved CartPole:");
+        for result in &solved_algorithms {
+            println!("  - {} in {} episodes", 
+                     result.algorithm, 
+                     result.episodes_to_solve.unwrap());
+        }
         
-        if let (Some(dqn_ep), Some(tuned_ep)) = (results[1].episodes_to_solve, results[2].episodes_to_solve) {
-            if tuned_ep < dqn_ep {
-                println!("✓ Hyperparameter tuning improves learning speed by {:.0}%", 
-                        (1.0 - tuned_ep as f64 / dqn_ep as f64) * 100.0);
-            }
+        // Find the fastest solver
+        if let Some(fastest) = solved_algorithms.iter()
+            .min_by_key(|r| r.episodes_to_solve.unwrap()) {
+            println!("\n✓ Fastest solver: {} ({} episodes)", 
+                     fastest.algorithm, 
+                     fastest.episodes_to_solve.unwrap());
         }
     } else {
-        println!("✗ Neither DQN variant solved CartPole within {} episodes", episodes);
+        println!("✗ No algorithms solved CartPole within {} episodes", episodes);
         println!("  Consider increasing episode limit or adjusting hyperparameters");
+    }
+    
+    // Performance comparison
+    if results.len() > 1 {
+        let fastest_inference = results.iter()
+            .min_by_key(|r| r.inference_time_us)
+            .unwrap();
+        println!("\n✓ Fastest inference: {} ({}μs per action)", 
+                 fastest_inference.algorithm, 
+                 fastest_inference.inference_time_us);
     }
 }

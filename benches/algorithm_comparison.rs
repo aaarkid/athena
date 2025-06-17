@@ -150,6 +150,11 @@ fn benchmark_dqn(episodes: usize) -> BenchmarkResult {
         
         // Decay epsilon
         agent.epsilon = (agent.epsilon * 0.995).max(0.01);
+        
+        // Progress tracking
+        if episode % 20 == 0 {
+            println!("DQN Episode {}/{}", episode, episodes);
+        }
     }
     
     let training_time = start.elapsed();
@@ -248,6 +253,12 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
             if done || current_episode_reward < -200.0 {
                 episode_rewards.push(current_episode_reward);
                 episode += 1;
+                
+                // Progress tracking
+                if episode % 20 == 0 {
+                    println!("PPO Episode {}/{}", episode, episodes);
+                }
+                
                 state = env.reset();
                 current_episode_reward = 0.0;
             }
@@ -338,7 +349,6 @@ fn benchmark_ppo(episodes: usize) -> BenchmarkResult {
 fn benchmark_sac(episodes: usize) -> BenchmarkResult {
     println!("\nBenchmarking SAC...");
     let start = Instant::now();
-    let mut last_print = Instant::now();
     
     // Create SAC agent
     let optimizer = OptimizerWrapper::SGD(SGD::new());
@@ -583,9 +593,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut results = Vec::new();
     
     // Run benchmarks
-    // TEMP: Skip DQN and PPO for debugging
-    // results.push(benchmark_dqn(episodes));
-    // results.push(benchmark_ppo(episodes));
+    results.push(benchmark_dqn(episodes));
+    results.push(benchmark_ppo(episodes));
     results.push(benchmark_sac(episodes));
     // TD3 and A2C would be similar
     
