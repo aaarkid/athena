@@ -3,6 +3,7 @@ pub mod macros;
 
 pub mod activations;
 pub mod agent;
+pub mod agent_v2;
 pub mod error;
 pub mod layers; 
 pub mod loss;
@@ -246,5 +247,58 @@ mod tests {
         assert_eq!(replay_buffer.len(), 1);
         let sample = replay_buffer.sample(1);
         assert_eq!(sample[0], &experience);
+    }
+    
+    #[test]
+    fn test_enhanced_dqn_agent() {
+        use crate::agent_v2::DqnAgentV2;
+        
+        let layer_sizes = [4, 32, 2];
+        let epsilon = 0.5;
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let agent = DqnAgentV2::new(&layer_sizes, epsilon, optimizer, 100, true);
+        
+        assert_eq!(agent.epsilon, 0.5);
+        assert_eq!(agent.q_network.layers.len(), 2);
+        assert_eq!(agent.target_network.layers.len(), 2);
+        assert_eq!(agent.target_update_freq, 100);
+        assert!(agent.use_double_dqn);
+    }
+    
+    #[test]
+    fn test_dqn_builder() {
+        use crate::agent_v2::DqnAgentBuilder;
+        
+        let agent = DqnAgentBuilder::new()
+            .layer_sizes(&[4, 32, 2])
+            .epsilon(0.3)
+            .optimizer(OptimizerWrapper::SGD(SGD::new()))
+            .target_update_freq(200)
+            .use_double_dqn(false)
+            .build()
+            .unwrap();
+            
+        assert_eq!(agent.epsilon, 0.3);
+        assert_eq!(agent.target_update_freq, 200);
+        assert!(!agent.use_double_dqn);
+    }
+    
+    #[test]
+    fn test_new_activations() {
+        use ndarray::array;
+        
+        // Test LeakyReLU
+        let leaky = Activation::LeakyRelu { alpha: 0.01 };
+        let mut input = array![-1.0, 0.0, 1.0];
+        leaky.apply(&mut input);
+        assert_eq!(input, array![-0.01, 0.0, 1.0]);
+        
+        // Test ELU
+        let elu = Activation::Elu { alpha: 1.0 };
+        let mut input = array![-1.0, 0.0, 1.0];
+        elu.apply(&mut input);
+        assert!((input[0] - (-0.632)).abs() < 0.001);
+        assert_eq!(input[1], 0.0);
+        assert_eq!(input[2], 1.0);
     }
 }
