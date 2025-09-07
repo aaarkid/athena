@@ -1,5 +1,6 @@
-use crate::network::{Activation, NeuralNetwork};
-use crate::optimizer::{OptimizerWrapper};
+use crate::network::NeuralNetwork;
+use crate::activations::Activation;
+use crate::optimizer::OptimizerWrapper;
 use crate::replay_buffer::Experience;
 use ndarray::parallel::prelude::{IntoParallelRefIterator, ParallelIterator};
 use rand::{Rng, rngs::ThreadRng};

@@ -1,12 +1,18 @@
-#![allow(dead_code)]
-#![allow(unused_macros)]
-
 #[macro_use]
-pub mod agent;
-pub mod network;
+pub mod macros;
 
-pub mod replay_buffer;
+pub mod activations;
+pub mod agent;
+pub mod layers; 
+pub mod loss;
+pub mod network;
 pub mod optimizer;
+pub mod replay_buffer;
+
+// Re-export commonly used types for backward compatibility
+pub use activations::Activation;
+pub use layers::{Layer, DenseLayer};
+pub use network::NeuralNetwork;
 
 #[cfg(test)]
 mod tests {
@@ -14,7 +20,9 @@ mod tests {
     use ndarray::arr2;
     use ndarray::array;
     use crate::agent::DqnAgent;
-    use crate::network::{Activation, Layer, NeuralNetwork};
+    use crate::network::NeuralNetwork;
+    use crate::activations::Activation;
+    use crate::layers::Layer;
     use crate::optimizer::Adam;
     use crate::optimizer::Optimizer;
     use crate::optimizer::{OptimizerWrapper, SGD};
@@ -78,8 +86,8 @@ mod tests {
 
         network.train_minibatch(inputs.view(), targets.view(), 0.01);
 
-        let new_output1 = network.forward(inputs.row(0).view());
-        let new_output2 = network.forward(inputs.row(1).view());
+        let new_output1 = network.forward(inputs.row(0));
+        let new_output2 = network.forward(inputs.row(1));
 
         assert_eq!(new_output1.shape(), [1]);
         assert_eq!(new_output2.shape(), [1]);
