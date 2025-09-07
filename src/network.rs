@@ -131,7 +131,7 @@ impl NeuralNetwork {
     /// Save the neural network's state to a file.
     /// This function serializes the neural network, including its layers and optimizer, and writes
     /// the serialized data to a file at the specified path.
-    pub fn save(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save(&self, path: &str) -> crate::error::Result<()> {
         let serialized = serialize(self)?;
         let mut file = fs::File::create(path)?;
         file.write_all(&serialized)?;
@@ -141,7 +141,7 @@ impl NeuralNetwork {
     /// Load a neural network from a file.
     /// This function reads the serialized data from a file at the specified path, deserializes it,
     /// and constructs a new neural network with the loaded state.
-    pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(path: &str) -> crate::error::Result<Self> {
         let mut file = fs::File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;

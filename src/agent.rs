@@ -70,8 +70,6 @@ impl DqnAgent {
 
         let network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
 
-        // println!("Layer weight shapes: {:?}", network.layers.iter().map(|layer| layer.weights.shape()).collect::<Vec<_>>());
-
         let rng = rand::thread_rng();
 
         DqnAgent { network, epsilon, rng }
