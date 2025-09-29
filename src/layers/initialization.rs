@@ -3,6 +3,7 @@ use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::{Normal, Uniform};
 
 /// Weight initialization strategies
+#[derive(Debug, Clone)]
 pub enum WeightInit {
     /// Xavier/Glorot uniform initialization
     XavierUniform,
