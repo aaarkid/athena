@@ -13,10 +13,5 @@ pub mod optimizer;
 pub mod replay_buffer;
 pub mod visualization;
 
-// Re-export commonly used types for backward compatibility
-pub use activations::Activation;
-pub use layers::{Layer, DenseLayer};
-pub use network::NeuralNetwork;
-
 #[cfg(test)]
 mod tests;

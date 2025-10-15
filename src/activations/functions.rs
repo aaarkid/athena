@@ -144,15 +144,3 @@ impl Activation {
     }
 }
 
-/// Backward compatibility: renamed methods
-impl Activation {
-    #[inline]
-    pub fn apply_minibatch(&self, inputs: &mut Array2<f32>) {
-        self.apply_batch(inputs)
-    }
-    
-    #[inline]
-    pub fn derivative_minibatch(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        self.derivative_batch(inputs)
-    }
-}
