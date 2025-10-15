@@ -6,7 +6,7 @@
 ***/
 
 use athena::{
-    agent_v2::{DqnAgentV2, DqnAgentBuilder},
+    agent::DqnAgentBuilder,
     replay_buffer::{ReplayBuffer, Experience},
     optimizer::{OptimizerWrapper, SGD},
 };

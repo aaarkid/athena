@@ -2,7 +2,7 @@ use athena::{
     network::NeuralNetwork,
     activations::Activation,
     optimizer::{OptimizerWrapper, SGD, Adam},
-    agent_v2::DqnAgentBuilder,
+    agent::DqnAgentBuilder,
     replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod},
     layers::Layer,
 };
@@ -25,7 +25,7 @@ where F: FnMut()
 #[ignore] // Run with: cargo test --ignored benchmark
 fn benchmark_forward_pass() {
     let layer_sizes = &[784, 128, 64, 10]; // MNIST-like architecture
-    let activations = &[Activation::Relu, Activation::Relu, Activation::Softmax];
+    let activations = &[Activation::Relu, Activation::Relu, Activation::Linear];
     let optimizer = OptimizerWrapper::SGD(SGD::new());
     let mut network = NeuralNetwork::new(layer_sizes, activations, optimizer);
     
@@ -84,7 +84,7 @@ fn benchmark_optimizers() {
 #[ignore]
 fn benchmark_activation_functions() {
     let size = 1000;
-    let mut data = Array1::linspace(-5.0, 5.0, size);
+    let data = Array1::linspace(-5.0, 5.0, size);
     
     let activations = vec![
         ("ReLU", Activation::Relu),
@@ -138,7 +138,7 @@ fn benchmark_replay_buffer() {
 #[test]
 #[ignore]
 fn benchmark_agent_action_selection() {
-    let agent = DqnAgentBuilder::new()
+    let mut agent = DqnAgentBuilder::new()
         .layer_sizes(&[84, 256, 128, 6]) // Atari-like architecture
         .epsilon(0.1)
         .optimizer(OptimizerWrapper::SGD(SGD::new()))
@@ -148,11 +148,13 @@ fn benchmark_agent_action_selection() {
     let state = Array1::ones(84);
     
     benchmark_operation("Agent action selection", 10000, || {
-        let _ = agent.act(state.view());
+        let _ = agent.act(state.view()).unwrap();
     });
     
+    // For greedy action, set epsilon to 0
+    agent.epsilon = 0.0;
     benchmark_operation("Agent greedy action", 10000, || {
-        let _ = agent.act_greedy(state.view());
+        let _ = agent.act(state.view()).unwrap();
     });
 }
 

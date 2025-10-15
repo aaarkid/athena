@@ -47,7 +47,7 @@ fn main() {
     let layer_sizes = &[20, 16, 3];
     // let layers = Layer::to_vector(layer_sizes);
     let optimizer = OptimizerWrapper::SGD(SGD::new());
-    let mut agent = DqnAgent::new(layer_sizes, EPSILON, optimizer);
+    let mut agent = DqnAgent::new(layer_sizes, EPSILON, optimizer, 1000, false); // Standard DQN
 
     // Creating a replay buffer to store the experiences for training.
     let mut replay_buffer = ReplayBuffer::new(CAPACITY);
@@ -64,7 +64,7 @@ fn main() {
         // Loop over episodes.
         for _episode in 0..100 {
             // The agent chooses an action based on the current state.
-            let action = agent.act(state.view());
+            let action = agent.act(state.view()).unwrap_or(0);
 
             // Update the player's position based on the action.
             match action {
@@ -104,7 +104,7 @@ fn main() {
             // If there are enough experiences in the buffer, sample a batch and train the agent.
             if replay_buffer.len() > BATCH_SIZE {
                 let experiences = replay_buffer.sample(BATCH_SIZE);
-                agent.train_on_batch(&experiences, GAMMA, LEARNING_RATE);
+                let _ = agent.train_on_batch(&experiences, GAMMA, LEARNING_RATE);
             }
         }
         // Print the total reward and the time taken for training.
@@ -119,7 +119,7 @@ fn main() {
     state = initialize_state(player_pos, object_pos);
     let mut done = false;
     while !done {
-        let action = agent.act(state.view());
+        let action = agent.act(state.view()).unwrap_or(0);
         match action {
             0 => {
                 player_pos = (player_pos as isize - 1).rem_euclid(BOARD_SIZE as isize) as usize;
@@ -134,6 +134,6 @@ fn main() {
         let (_, end) = game_logic(player_pos, object_pos);
         done = end;
         state = initialize_state(player_pos, object_pos);
-        println!("Player position: {}, Object position: {}, Action: {}", player_pos, object_pos,  action);
+        println!("Player position: {}, Object position: {}, Action: {}", player_pos, object_pos, action);
     }
 }

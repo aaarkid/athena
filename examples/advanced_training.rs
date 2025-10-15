@@ -10,14 +10,12 @@
 ***/
 
 use athena::{
-    agent_v2::DqnAgentBuilder,
     replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod},
-    optimizer::{OptimizerWrapper, SGD, LearningRateScheduler, GradientClipper},
-    layers::{DenseLayer, BatchNormLayer, DropoutLayer, WeightInit},
+    optimizer::{LearningRateScheduler, GradientClipper},
+    layers::{DenseLayer, WeightInit},
     activations::Activation,
-    network::NeuralNetwork,
 };
-use ndarray::{Array1, array};
+use ndarray::array;
 
 fn main() {
     println!("=== Advanced Training Features Demo ===\n");
@@ -83,8 +81,8 @@ fn main() {
     println!("4. Advanced Network Architecture");
     
     // Create layers with different initialization strategies
-    let dense1 = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::HeNormal);
-    let dense2 = DenseLayer::new_with_init(64, 32, Activation::Relu, WeightInit::XavierUniform);
+    let _dense1 = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::HeNormal);
+    let _dense2 = DenseLayer::new_with_init(64, 32, Activation::Relu, WeightInit::XavierUniform);
     
     println!("  Created dense layers with He and Xavier initialization");
     println!("  Layer 1: {} -> {} with ReLU", 10, 64);

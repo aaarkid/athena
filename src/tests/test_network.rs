@@ -81,7 +81,7 @@ fn test_loss_functions() {
     // Test MSE Loss
     let mse = MSELoss;
     let mse_loss = mse.compute(predictions.view(), targets.view());
-    assert!((mse_loss - 0.02).abs() < 1e-4); // ((0.1)^2 + (0.1)^2 + (0.2)^2) / 3
+    assert!((mse_loss - 0.01).abs() < 1e-4); // ((0.1)^2 + (0.1)^2 + (0.2)^2) / (2 * 3)
     
     // Test gradient
     let mse_grad = mse.gradient(predictions.view(), targets.view());

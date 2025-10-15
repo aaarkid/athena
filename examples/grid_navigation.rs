@@ -90,7 +90,7 @@ fn main() {
     // Create the DQN agent with SGD optimizer
     let layer_sizes = &[STATE_SIZE, 32, 16, ACTION_SIZE];
     let optimizer = OptimizerWrapper::SGD(SGD::new());
-    let mut agent = DqnAgent::new(layer_sizes, EPSILON, optimizer);
+    let mut agent = DqnAgent::new(layer_sizes, EPSILON, optimizer, 1000, false); // Standard DQN without Double DQN
     
     // Create replay buffer
     let mut replay_buffer = ReplayBuffer::new(CAPACITY);
@@ -106,7 +106,7 @@ fn main() {
 
         loop {
             // Agent selects action
-            let action = agent.act(state.view());
+            let action = agent.act(state.view()).unwrap_or(0);
             
             // Environment step
             let (reward, done) = env.step(action);
@@ -128,7 +128,7 @@ fn main() {
             // Train if enough samples
             if replay_buffer.len() >= BATCH_SIZE {
                 let experiences = replay_buffer.sample(BATCH_SIZE);
-                agent.train_on_batch(&experiences, GAMMA, LEARNING_RATE);
+                let _ = agent.train_on_batch(&experiences, GAMMA, LEARNING_RATE); // Ignore loss for now
             }
             
             state = next_state;
@@ -166,7 +166,7 @@ fn main() {
         println!("\nTest {}: Starting from {:?}", test + 1, env.agent_pos);
         
         for step in 0..MAX_STEPS {
-            let action = agent.act(state.view());
+            let action = agent.act(state.view()).unwrap_or(0);
             let (_reward, done) = env.step(action);
             path.push(env.agent_pos);
             state = env.get_state();
