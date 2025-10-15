@@ -10,7 +10,7 @@
 ***/
 
 use athena::{
-    replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod},
+    replay_buffer::{PrioritizedReplayBuffer, PriorityMethod},
     optimizer::{LearningRateScheduler, GradientClipper},
     layers::{DenseLayer, WeightInit},
     activations::Activation,

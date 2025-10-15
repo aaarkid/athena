@@ -1,6 +1,5 @@
 use ndarray::array;
-use crate::replay_buffer::{ReplayBuffer, Experience};
-use crate::replay_buffer_v2::{PrioritizedReplayBuffer, PriorityMethod};
+use crate::replay_buffer::{ReplayBuffer, Experience, PrioritizedReplayBuffer, PriorityMethod};
 
 #[test]
 fn test_replay_buffer_add_and_sample() {
