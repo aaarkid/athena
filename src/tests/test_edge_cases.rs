@@ -186,24 +186,26 @@ fn test_optimizer_with_zero_gradients() {
     let mut sgd = SGD::new();
     let mut weights = array![[1.0, 1.0], [1.0, 1.0]];
     let zero_grads = array![[0.0, 0.0], [0.0, 0.0]];
-    sgd.update_weights(&mut weights, &zero_grads, 0.1);
+    sgd.update_weights(0, &mut weights, &zero_grads, 0.1);
     assert_eq!(weights, array![[1.0, 1.0], [1.0, 1.0]]); // No change
     
     // Test Adam
     let mut adam = Adam::new(&layers, 0.9, 0.999, 1e-8);
     let mut weights = array![[1.0, 1.0], [1.0, 1.0]];
-    adam.update_weights(&mut weights, &zero_grads, 0.1);
+    adam.update_weights(0, &mut weights, &zero_grads, 0.1);
     // Should handle zero gradients gracefully
     for &w in weights.iter() {
+        let w: f32 = w;
         assert!(w.is_finite());
     }
     
     // Test RMSProp
     let mut rmsprop = RMSProp::new(&layers, 0.9, 1e-8);
     let mut weights = array![[1.0, 1.0], [1.0, 1.0]];
-    rmsprop.update_weights(&mut weights, &zero_grads, 0.1);
+    rmsprop.update_weights(0, &mut weights, &zero_grads, 0.1);
     // Should handle zero gradients gracefully
     for &w in weights.iter() {
+        let w: f32 = w;
         assert!(w.is_finite());
     }
 }
