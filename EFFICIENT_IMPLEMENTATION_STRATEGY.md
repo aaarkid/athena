@@ -59,9 +59,9 @@ This strategy reorganizes the improvement plan based on dependencies and code im
 - ✓ All integrated with forward/backward passes
 
 ### 2.3 Implement New Optimizers ✓
-- ✓ Add RMSProp optimizer (needs layer index tracking fix)
-- ⏳ Implement learning rate scheduling (next phase)
-- ⏳ Implement gradient clipping (next phase)
+- ✓ Add RMSProp optimizer (layer index tracking fixed)
+- ✓ Implement learning rate scheduling
+- ✓ Implement gradient clipping
 
 ## Phase 3: Layer Types & Network Features (Week 3) ✓ COMPLETED
 **Build on the new architecture**
@@ -151,6 +151,12 @@ This strategy reorganizes the improvement plan based on dependencies and code im
 - ✓ Fixed existing examples (grid_navigation, falling_object)
 - ✓ Fixed all test failures
 - ✓ Unified DqnAgent implementation (removed V2 duplication)
+- ✓ Unified ReplayBuffer implementation (removed V2 duplication)
+- ✓ Fixed RMSProp optimizer layer tracking issue
+- ✓ Redesigned Optimizer trait with layer_idx parameter
+- ✓ Updated all optimizer implementations for proper state tracking
+- ✓ Removed backward compatibility methods (forward_minibatch, etc.)
+- ✓ All 63 tests passing, 8 benchmark tests available
 - Add comprehensive examples
 - Create tutorials
 - Benchmark comparisons
