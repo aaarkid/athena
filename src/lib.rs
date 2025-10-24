@@ -14,5 +14,8 @@ pub mod optimizer;
 pub mod replay_buffer;
 pub mod visualization;
 
+#[cfg(feature = "python")]
+pub mod bindings;
+
 #[cfg(test)]
 mod tests;
