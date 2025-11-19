@@ -32,8 +32,8 @@ impl OnnxExporter {
             writeln!(file)?;
             writeln!(file, "### Layer {}", i)?;
             writeln!(file, "type: Dense")?;
-            writeln!(file, "input_size: {}", layer.input_size)?;
-            writeln!(file, "output_size: {}", layer.output_size)?;
+            writeln!(file, "input_size: {}", layer.weights.shape()[0])?;
+            writeln!(file, "output_size: {}", layer.weights.shape()[1])?;
             writeln!(file, "activation: {}", activation_to_onnx(&layer.activation))?;
             
             // Write weights
@@ -56,7 +56,7 @@ impl OnnxExporter {
     
     /// Export network to a JSON format that can be easily converted to ONNX
     pub fn export_json(network: &NeuralNetwork, path: &Path) -> Result<()> {
-        use serde_json::{json, Value};
+        use serde_json::json;
         
         let mut layers = Vec::new();
         
@@ -69,8 +69,8 @@ impl OnnxExporter {
             let layer_json = json!({
                 "name": format!("layer_{}", i),
                 "type": "Dense",
-                "input_size": layer.input_size,
-                "output_size": layer.output_size,
+                "input_size": layer.weights.shape()[0],
+                "output_size": layer.weights.shape()[1],
                 "activation": activation_to_onnx(&layer.activation),
                 "weights": weights,
                 "biases": layer.biases.to_vec(),
@@ -112,8 +112,8 @@ fn activation_to_onnx(activation: &Activation) -> &'static str {
         Activation::Sigmoid => "Sigmoid",
         Activation::Tanh => "Tanh",
         Activation::Linear => "Identity",
-        Activation::LeakyRelu(_) => "LeakyRelu",
-        Activation::Elu(_) => "Elu",
+        Activation::LeakyRelu { .. } => "LeakyRelu",
+        Activation::Elu { .. } => "Elu",
         Activation::Gelu => "Gelu",
     }
 }
@@ -190,8 +190,8 @@ fn onnx_to_activation(name: &str) -> Result<Activation> {
         "Sigmoid" => Ok(Activation::Sigmoid),
         "Tanh" => Ok(Activation::Tanh),
         "Identity" => Ok(Activation::Linear),
-        "LeakyRelu" => Ok(Activation::LeakyRelu(0.01)),
-        "Elu" => Ok(Activation::Elu(1.0)),
+        "LeakyRelu" => Ok(Activation::LeakyRelu { alpha: 0.01 }),
+        "Elu" => Ok(Activation::Elu { alpha: 1.0 }),
         "Gelu" => Ok(Activation::Gelu),
         _ => Err(AthenaError::InvalidParameter {
             name: "activation".to_string(),

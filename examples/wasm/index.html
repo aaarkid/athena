@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Athena WebAssembly Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .output {
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>Athena WebAssembly Demo</h1>
+    
+    <div class="section">
+        <h2>Neural Network Test</h2>
+        <button onclick="testNeuralNetwork()">Run Neural Network</button>
+        <div id="nn-output" class="output"></div>
+    </div>
+    
+    <div class="section">
+        <h2>DQN Agent Test</h2>
+        <button onclick="testDqnAgent()">Run DQN Agent</button>
+        <div id="dqn-output" class="output"></div>
+    </div>
+    
+    <div class="section">
+        <h2>Replay Buffer Test</h2>
+        <button onclick="testReplayBuffer()">Test Replay Buffer</button>
+        <div id="buffer-output" class="output"></div>
+    </div>
+
+    <script type="module">
+        import init, { 
+            WasmNeuralNetwork, 
+            WasmDqnAgent, 
+            WasmReplayBuffer 
+        } from './athena_wasm.js';
+        
+        async function initialize() {
+            await init();
+            console.log("Athena WASM loaded!");
+        }
+        
+        window.testNeuralNetwork = function() {
+            const output = document.getElementById('nn-output');
+            
+            try {
+                // Create network
+                const config = {
+                    layer_sizes: [4, 32, 32, 2],
+                    activations: ["relu", "relu", "linear"],
+                    optimizer: "sgd"
+                };
+                
+                const network = new WasmNeuralNetwork(config);
+                
+                // Test forward pass
+                const input = [0.1, 0.2, 0.3, 0.4];
+                const result = network.forward(input);
+                
+                output.innerHTML = `
+                    <h3>Neural Network Test</h3>
+                    <p>Network created with layers: ${config.layer_sizes.join(' -> ')}</p>
+                    <p>Input: [${input.join(', ')}]</p>
+                    <p>Output: [${result.map(x => x.toFixed(4)).join(', ')}]</p>
+                `;
+                
+                // Test batch forward
+                const batchInput = Array(20).fill(0).map(() => Math.random());
+                const batchResult = network.forward_batch(batchInput, 5);
+                
+                output.innerHTML += `
+                    <p>Batch test: 5 samples processed</p>
+                    <p>Output shape: [5, 2]</p>
+                `;
+                
+            } catch (error) {
+                output.innerHTML = `<p style="color: red;">Error: ${error}</p>`;
+            }
+        };
+        
+        window.testDqnAgent = function() {
+            const output = document.getElementById('dqn-output');
+            
+            try {
+                // Create agent
+                const config = {
+                    state_size: 4,
+                    action_size: 2,
+                    hidden_sizes: [32, 32],
+                    epsilon: 0.1,
+                    target_update_freq: 100,
+                    use_double_dqn: true
+                };
+                
+                const agent = new WasmDqnAgent(config);
+                
+                // Test action selection
+                const state = [0.1, -0.2, 0.3, -0.4];
+                const action = agent.act(state);
+                
+                output.innerHTML = `
+                    <h3>DQN Agent Test</h3>
+                    <p>Agent created with state size: ${config.state_size}, action size: ${config.action_size}</p>
+                    <p>State: [${state.join(', ')}]</p>
+                    <p>Selected action: ${action}</p>
+                    <p>Current epsilon: ${agent.get_epsilon()}</p>
+                `;
+                
+                // Update target network
+                agent.update_target_network();
+                
+                // Decay epsilon
+                agent.decay_epsilon(0.99);
+                
+                output.innerHTML += `
+                    <p>Target network updated</p>
+                    <p>Epsilon after decay: ${agent.get_epsilon()}</p>
+                `;
+                
+            } catch (error) {
+                output.innerHTML = `<p style="color: red;">Error: ${error}</p>`;
+            }
+        };
+        
+        window.testReplayBuffer = function() {
+            const output = document.getElementById('buffer-output');
+            
+            try {
+                // Create buffer
+                const buffer = new WasmReplayBuffer(1000);
+                
+                // Add some experiences
+                for (let i = 0; i < 50; i++) {
+                    const state = [Math.random(), Math.random(), Math.random(), Math.random()];
+                    const action = Math.floor(Math.random() * 2);
+                    const reward = Math.random() * 2 - 1;
+                    const next_state = [Math.random(), Math.random(), Math.random(), Math.random()];
+                    const done = i % 10 === 0;
+                    
+                    buffer.add(state, action, reward, next_state, done);
+                }
+                
+                output.innerHTML = `
+                    <h3>Replay Buffer Test</h3>
+                    <p>Buffer capacity: 1000</p>
+                    <p>Current size: ${buffer.len()}</p>
+                    <p>Is empty: ${buffer.is_empty()}</p>
+                    <p>Added 50 experiences successfully</p>
+                `;
+                
+            } catch (error) {
+                output.innerHTML = `<p style="color: red;">Error: ${error}</p>`;
+            }
+        };
+        
+        // Initialize when page loads
+        initialize();
+    </script>
+</body>
+</html>

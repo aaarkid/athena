@@ -18,5 +18,8 @@ pub mod visualization;
 #[cfg(feature = "python")]
 pub mod bindings;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 #[cfg(test)]
 mod tests;
