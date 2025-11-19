@@ -20,6 +20,9 @@ numpy = { version = "0.20", optional = true }
 default = []
 python = ["pyo3", "numpy"]
 
+[dev-dependencies]
+tempfile = "3.0"
+
 [lib]
 name = "athena"
 crate-type = ["cdylib", "rlib"]

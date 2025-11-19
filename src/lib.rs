@@ -6,6 +6,7 @@ pub mod agent;
 pub mod algorithms;
 pub mod debug;
 pub mod error;
+pub mod export;
 pub mod layers; 
 pub mod loss;
 pub mod metrics;
