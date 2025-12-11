@@ -218,21 +218,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::default();
     
     // Create PPO agent
-    let optimizer = OptimizerWrapper::Adam(Adam::new(
-        config.learning_rate,
-        0.9,
-        0.999,
-        1e-8
-    ));
+    let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
     
-    let mut agent = PPOBuilder::new()
-        .input_dim(4)  // CartPole has 4-dimensional state
-        .action_dim(2) // 2 discrete actions (left/right)
-        .hidden_dims(config.hidden_dims.clone())
+    let mut agent = PPOBuilder::new(4, 2)  // state_size, action_size
+        .hidden_sizes(config.hidden_dims.clone())
         .optimizer(optimizer)
         .gamma(config.gamma)
         .gae_lambda(config.gae_lambda)
-        .clip_epsilon(config.clip_epsilon)
+        .clip_param(config.clip_epsilon)
         .value_coeff(config.value_coeff)
         .entropy_coeff(config.entropy_coeff)
         .build()?;
@@ -246,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut normalizer = StateNormalizer::new(4);
     
     // Metrics tracking
-    let mut metrics = MetricsTracker::new();
+    let mut metrics = MetricsTracker::new(4, 1000);  // Track last 1000 episodes
     let mut episode_count = 0;
     let mut total_steps = 0;
     
@@ -306,7 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 if done {
                     let episode_reward = env.steps as f32;
-                    metrics.add_episode_reward(episode_reward);
+                    metrics.end_episode();
                     episode_count += 1;
                     
                     if episode_count % config.render_frequency == 0 {
@@ -378,8 +371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // Print statistics
         if episode_count % 10 == 0 && episode_count > 0 {
-            let recent_rewards = metrics.get_episode_rewards();
-            let avg_reward = recent_rewards.iter().rev().take(100).sum::<f32>() / 100.0.min(recent_rewards.len() as f32);
+            let avg_reward = metrics.avg_episode_reward(100).unwrap_or(0.0);
             
             println!("\n=== Training Progress ===");
             println!("Episodes: {}/{}", episode_count, config.max_episodes);

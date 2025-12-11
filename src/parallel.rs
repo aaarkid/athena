@@ -7,7 +7,6 @@ use ndarray::{Array1, Array2, Array3, Array4, ArrayView1, ArrayView2, ArrayView3
 use ndarray::parallel::prelude::*;
 use crate::network::NeuralNetwork;
 use crate::layers::{Layer, LayerTrait};
-use crate::activations::Activation;
 use rand::seq::SliceRandom;
 
 /// Parallel batch forward pass for neural networks
@@ -326,6 +325,7 @@ impl Layer {
 mod tests {
     use super::*;
     use crate::optimizer::{OptimizerWrapper, SGD};
+    use crate::activations::Activation;
     
     #[test]
     fn test_parallel_matmul() {

@@ -281,25 +281,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut logger = TrainingLogger::new("logs/pendulum_sac.csv")?;
     
     // Create SAC agent
-    let actor_optimizer = OptimizerWrapper::Adam(Adam::new(
-        config.learning_rate_actor, 0.9, 0.999, 1e-8
-    ));
-    let critic_optimizer = OptimizerWrapper::Adam(Adam::new(
-        config.learning_rate_critic, 0.9, 0.999, 1e-8
-    ));
+    let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
     
     let target_entropy = config.target_entropy.unwrap_or(-1.0); // -action_dim
     
-    let mut agent = SACBuilder::new()
-        .input_dim(3)  // Pendulum state dimension
-        .action_dim(1) // Single continuous action
-        .hidden_dims(config.hidden_dims.clone())
-        .actor_optimizer(actor_optimizer)
-        .critic_optimizer(critic_optimizer)
+    let mut agent = SACBuilder::new(3, 1)  // state_size, action_size
+        .hidden_sizes(config.hidden_dims.clone())
+        .optimizer(optimizer)
         .gamma(config.gamma)
         .tau(config.tau)
         .alpha(config.initial_alpha)
-        .target_entropy(target_entropy)
         .auto_alpha(true)
         .build()?;
     
@@ -307,11 +298,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = if config.use_per {
         PrioritizedReplayBuffer::new(
             config.buffer_size,
-            config.per_alpha,
-            config.per_beta_start,
+            athena::replay_buffer::PriorityMethod::Proportional { alpha: config.per_alpha },
         )
     } else {
-        PrioritizedReplayBuffer::new(config.buffer_size, 0.0, 1.0)
+        PrioritizedReplayBuffer::new(config.buffer_size, athena::replay_buffer::PriorityMethod::Uniform)
     };
     
     // Create environment
@@ -354,7 +344,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // For continuous actions, we need to store the actual action values
         // This is a simplified version - in practice, you'd extend the Experience struct
-        buffer.add(experience, 1.0); // Initial priority
+        buffer.add_with_priority(experience, 1.0); // Initial priority
         
         // Update state
         state = if done {
@@ -381,7 +371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                       (config.per_beta_end - config.per_beta_start) * 
                       (total_steps as f32 / config.max_steps as f32);
             
-            let (indices, batch, weights) = buffer.sample_with_indices(config.batch_size, beta);
+            let (batch, weights, indices) = buffer.sample_with_weights(config.batch_size, beta);
             
             // Train SAC (simplified - would need to adapt for continuous actions)
             let (actor_loss, critic_loss, td_errors) = agent.train_on_batch(&batch, &weights)?;
@@ -441,8 +431,8 @@ fn evaluate_agent(agent: &mut SACAgent, n_episodes: usize) -> Result<f32, Box<dy
         let mut episode_reward = 0.0;
         
         loop {
-            // Deterministic action for evaluation
-            let action = agent.act_deterministic(&state)?;
+            // Deterministic action for evaluation (use act with deterministic=true)
+            let action = agent.act(state.view(), true)?;
             let (next_state, reward, done) = env.step(&action);
             
             episode_reward += reward;
