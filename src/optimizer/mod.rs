@@ -1,3 +1,69 @@
+//! # Optimization Algorithms Module
+//! 
+//! This module provides various optimization algorithms for training neural networks.
+//! Optimizers are responsible for updating network parameters based on computed gradients.
+//! 
+//! ## Available Optimizers
+//! 
+//! - **SGD (Stochastic Gradient Descent)**
+//!   - Simplest optimizer: `w = w - lr * gradient`
+//!   - Fast but can get stuck in local minima
+//!   - Good for convex problems
+//! 
+//! - **Adam (Adaptive Moment Estimation)**
+//!   - Combines momentum with adaptive learning rates
+//!   - Currently most popular optimizer
+//!   - Works well out-of-the-box for most problems
+//!   - Maintains per-parameter learning rates
+//! 
+//! - **RMSProp (Root Mean Square Propagation)**
+//!   - Addresses diminishing learning rates in AdaGrad
+//!   - Good for non-stationary objectives
+//!   - Often used in RNNs
+//! 
+//! ## Additional Features
+//! 
+//! - **Gradient Clipping**: Prevents exploding gradients
+//! - **Learning Rate Scheduling**: Adaptive learning rates over time
+//! 
+//! ## Usage Example
+//! 
+//! ```rust,no_run
+//! use athena::optimizer::{OptimizerWrapper, Adam};
+//! use athena::network::NeuralNetwork;
+//! use athena::activations::Activation;
+//! 
+//! // Create Adam optimizer with custom parameters
+//! let optimizer = OptimizerWrapper::Adam(Adam::new(
+//!     0.001,  // learning rate (will be multiplied by the train method's lr)
+//!     0.9,    // beta1 (momentum)
+//!     0.999,  // beta2 (RMSprop)
+//!     1e-8    // epsilon (numerical stability)
+//! ));
+//! 
+//! // Create network with optimizer
+//! let network = NeuralNetwork::new(
+//!     &[784, 128, 10],
+//!     &[Activation::Relu, Activation::Linear],
+//!     optimizer
+//! );
+//! ```
+//! 
+//! ## Choosing an Optimizer
+//! 
+//! | Optimizer | Best For | Learning Rate | Memory Usage |
+//! |-----------|----------|---------------|--------------|
+//! | SGD | Simple problems, fine-tuning | 0.01-0.1 | Low |
+//! | Adam | General purpose, default choice | 0.0001-0.001 | High |
+//! | RMSProp | RNNs, non-stationary problems | 0.001-0.01 | Medium |
+//! 
+//! ## Implementation Notes
+//! 
+//! - All optimizers maintain per-layer state for correct updates
+//! - The `layer_idx` parameter ensures state isolation between layers
+//! - Learning rates passed to update methods are multiplied with optimizer-specific rates
+//! - Serialization preserves optimizer state for training resumption
+
 pub mod gradient_clipper;
 pub mod lr_scheduler;
 
@@ -56,8 +122,7 @@ impl Default for SGD {
 
 impl Optimizer for SGD {
     fn update_weights(&mut self, _layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        let gradients = gradients.broadcast(weights.shape()).unwrap().to_owned();
-        weights.zip_mut_with(&gradients, |w, &g| *w -= learning_rate * g);
+        weights.zip_mut_with(gradients, |w, &g| *w -= learning_rate * g);
     }
 
     fn update_biases(&mut self, _layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
@@ -121,7 +186,6 @@ impl Adam {
 
 impl Optimizer for Adam {
     fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        let gradients = &gradients.broadcast(weights.shape()).unwrap().to_owned();
 
         let m = &mut self.m_weights[layer_idx];
         let v = &mut self.v_weights[layer_idx];
@@ -199,7 +263,6 @@ impl RMSProp {
 
 impl Optimizer for RMSProp {
     fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        let gradients = &gradients.broadcast(weights.shape()).unwrap().to_owned();
         
         let v = &mut self.v_weights[layer_idx];
         

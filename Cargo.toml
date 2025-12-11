@@ -26,10 +26,16 @@ wasm = ["wasm-bindgen", "serde-wasm-bindgen", "console_error_panic_hook"]
 
 [dev-dependencies]
 tempfile = "3.0"
+num_cpus = "1.16"
+criterion = "0.5"
 
 [lib]
 name = "athena"
 crate-type = ["cdylib", "rlib"]
+
+[[bench]]
+name = "algorithm_comparison"
+harness = false
 
 [package.metadata.docs.rs]
 logo = "assets/favicon.png"

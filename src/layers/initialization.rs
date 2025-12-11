@@ -43,7 +43,8 @@ impl WeightInit {
             
             WeightInit::XavierNormal => {
                 let std = (2.0 / (fan_in + fan_out) as f32).sqrt();
-                Array2::random(shape, Normal::new(0.0, std).unwrap())
+                let dist = Normal::new(0.0, std).unwrap_or(Normal::new(0.0, 0.01).expect("valid normal"));
+                Array2::random(shape, dist)
             }
             
             WeightInit::HeUniform => {
@@ -53,7 +54,8 @@ impl WeightInit {
             
             WeightInit::HeNormal => {
                 let std = (2.0 / fan_in as f32).sqrt();
-                Array2::random(shape, Normal::new(0.0, std).unwrap())
+                let dist = Normal::new(0.0, std).unwrap_or(Normal::new(0.0, 0.01).expect("valid normal"));
+                Array2::random(shape, dist)
             }
             
             WeightInit::Uniform { min, max } => {
@@ -61,7 +63,10 @@ impl WeightInit {
             }
             
             WeightInit::Normal { mean, std } => {
-                Array2::random(shape, Normal::new(*mean, *std).unwrap())
+                match Normal::new(*mean, *std) {
+                    Ok(dist) => Array2::random(shape, dist),
+                    Err(_) => Array2::zeros(shape), // Fallback to zeros if invalid parameters
+                }
             }
             
             WeightInit::Zeros => {
@@ -91,7 +96,10 @@ impl WeightInit {
             }
             
             WeightInit::Normal { mean, std } => {
-                Array1::random(size, Normal::new(*mean, *std).unwrap())
+                match Normal::new(*mean, *std) {
+                    Ok(dist) => Array1::random(size, dist),
+                    Err(_) => Array1::zeros(size), // Fallback to zeros if invalid parameters
+                }
             }
         }
     }

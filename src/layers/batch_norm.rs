@@ -66,7 +66,8 @@ impl BatchNormLayer {
         
         if self.training && batch_size > 1 {
             // Training mode: use batch statistics
-            let mean = inputs.mean_axis(Axis(0)).unwrap();
+            let mean = inputs.mean_axis(Axis(0))
+                .unwrap_or_else(|| Array1::zeros(num_features));
             let var = inputs.var_axis(Axis(0), 0.0);
             let std = var.mapv(|v| (v + self.epsilon).sqrt());
             
@@ -171,7 +172,7 @@ impl BatchNormLayer {
         let grad_mean_1 = grad_normalized.sum_axis(Axis(0)) * -1.0 / std;
         let mut grad_mean_2 = Array1::<f32>::zeros(num_features);
         for j in 0..num_features {
-            grad_mean_2[j] = grad_var[j] * -2.0 * (inputs.column(j).mean().unwrap() - mean[j]) / batch_size;
+            grad_mean_2[j] = grad_var[j] * -2.0 * (inputs.column(j).mean().unwrap_or(0.0) - mean[j]) / batch_size;
         }
         let grad_mean = grad_mean_1 + grad_mean_2;
         

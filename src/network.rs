@@ -1,3 +1,32 @@
+//! # Neural Network Module
+//! 
+//! This module provides the core neural network implementation for Athena.
+//! It supports feedforward networks with arbitrary architectures, various
+//! activation functions, and different optimization algorithms.
+//! 
+//! ## Example
+//! 
+//! ```rust,no_run
+//! use athena::network::NeuralNetwork;
+//! use athena::activations::Activation;
+//! use athena::optimizer::{OptimizerWrapper, SGD};
+//! use ndarray::array;
+//! 
+//! // Create a simple network: 2 inputs -> 3 hidden -> 1 output
+//! let network = NeuralNetwork::new(
+//!     &[2, 3, 1],
+//!     &[Activation::Relu, Activation::Sigmoid],
+//!     OptimizerWrapper::SGD(SGD::new())
+//! );
+//! ```
+//! 
+//! ## Features
+//! 
+//! - **Flexible Architecture**: Support for any number of layers
+//! - **Batch Processing**: Efficient forward and backward passes for batches
+//! - **Serialization**: Save and load trained models
+//! - **Optimizer Integration**: Works with any optimizer implementing the Optimizer trait
+
 use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2};
 use serde::{Serialize, Deserialize};
 use std::fs;
