@@ -89,6 +89,7 @@ fn main() {
     
     let epochs = 5;
     let steps_per_epoch = train_inputs.nrows() / BATCH_SIZE;
+    let learning_rate = 0.01;
     
     for epoch in 0..epochs {
         let mut epoch_loss = 0.0;
@@ -162,10 +163,10 @@ fn main() {
             // Scale gradients by batch size
             let scale = 1.0 / batch_indices.len() as f32;
             for w_grad in &mut all_weight_grads {
-                w_grad.scale_inplace(scale);
+                *w_grad *= scale;
             }
             for b_grad in &mut all_bias_grads {
-                b_grad.scale_inplace(scale);
+                *b_grad *= scale;
             }
             
             // Accumulate gradients
@@ -180,12 +181,18 @@ fn main() {
                     .zip(avg_weight_grads.iter().zip(avg_bias_grads.iter()))
                     .enumerate() 
                 {
+                    use athena::optimizer::Optimizer;
                     network.optimizer.update_weights(
+                        layer_idx,
                         &mut layer.weights,
-                        &mut layer.biases,
                         w_grad,
+                        learning_rate
+                    );
+                    network.optimizer.update_biases(
+                        layer_idx,
+                        &mut layer.biases,
                         b_grad,
-                        layer_idx
+                        learning_rate
                     );
                 }
                 
@@ -235,8 +242,9 @@ fn print_memory_stats(network: &NeuralNetwork, pool: &ArrayPool) {
     println!("  Total parameters: {}", total_params);
     println!("  Total memory: {:.2} MB", total_memory as f32 / 1024.0 / 1024.0);
     println!("  Array pool stats:");
-    println!("    1D arrays pooled: {}", pool.pool_1d.len());
-    println!("    2D arrays pooled: {}", pool.pool_2d.len());
+    // Pool statistics would be available through public methods
+    // For now, just show that the pool is being used
+    println!("    Array pool is active");
 }
 
 /// Attempt to convert dense layers to sparse representation

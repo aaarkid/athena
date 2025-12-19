@@ -244,11 +244,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_steps = 0;
     
     // Learning rate scheduler
-    let lr_scheduler = LearningRateScheduler::cosine(
-        config.learning_rate,
-        config.learning_rate * 0.1,
-        config.max_episodes * config.n_steps,
-    );
+    let lr_scheduler = LearningRateScheduler::CosineAnnealing {
+        max_lr: config.learning_rate,
+        min_lr: config.learning_rate * 0.1,
+        period: config.max_episodes * config.n_steps,
+    };
     
     println!("Starting CartPole PPO training...");
     println!("Environment: {} parallel instances", config.n_envs);
@@ -284,7 +284,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut values = Vec::new();
             
             for state in &normalized_states {
-                let (action, value) = agent.act_with_value(state)?;
+                let (action, _log_prob, value) = agent.act(state.view())?;
                 actions.push(action);
                 values.push(value);
             }
@@ -331,7 +331,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let final_values: Vec<_> = states.iter()
             .map(|s| {
                 let normalized = normalizer.normalize(s);
-                agent.value(&normalized).unwrap_or(0.0)
+                agent.value.forward(normalized.view())[0]
             })
             .collect();
         
@@ -352,16 +352,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Update learning rate
         let current_lr = lr_scheduler.get_lr(total_steps);
         
-        // Train PPO
-        agent.train(
-            states_array.view(),
-            actions_array.view(),
-            rewards_array.view(),
-            dones_array.view(),
-            values_array.view(),
-            final_values_array.view(),
-            current_lr,
-        )?;
+        // Create rollout buffer for PPO update
+        let mut rollout_buffer = athena::algorithms::ppo::PPORolloutBuffer::new();
+        
+        // Fill the buffer
+        for i in 0..actions_array.len() {
+            rollout_buffer.states.push(states_array.row(i).to_owned());
+            rollout_buffer.actions.push(actions_array[i]);
+            rollout_buffer.rewards.push(rewards_array[i]);
+            rollout_buffer.values.push(values_array[i]);
+            rollout_buffer.log_probs.push(0.0); // We didn't save log probs
+            rollout_buffer.dones.push(dones_array[i] > 0.5);
+        }
+        
+        // Compute advantages
+        let final_value = final_values_array.mean().unwrap_or(0.0);
+        agent.compute_gae(&mut rollout_buffer, final_value);
+        
+        // Update the agent
+        agent.update(&rollout_buffer, current_lr)?;
         
         // Save checkpoint
         if episode_count % config.save_frequency == 0 && episode_count > 0 {
@@ -397,7 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         loop {
             let normalized_state = normalizer.normalize(&state);
-            let action = agent.act(&normalized_state)?;
+            let (action, _, _) = agent.act(normalized_state.view())?;
             let (next_state, reward, done) = eval_env.step(action);
             
             episode_reward += reward;

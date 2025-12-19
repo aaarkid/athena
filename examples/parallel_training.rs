@@ -72,7 +72,7 @@ fn main() {
     println!("Using {} CPU threads for parallel computation\n", num_threads);
     
     // Create Q-network
-    let q_network = NeuralNetwork::new(
+    let mut q_network = NeuralNetwork::new(
         &[4, 128, 128, 2],
         &[Activation::Relu, Activation::Relu, Activation::Linear],
         OptimizerWrapper::SGD(athena::optimizer::SGD::new())
@@ -214,12 +214,18 @@ fn main() {
                 .zip(weight_grads.iter().zip(bias_grads.iter()))
                 .enumerate()
             {
+                use athena::optimizer::Optimizer;
                 updated_network.optimizer.update_weights(
+                    layer_idx,
                     &mut layer.weights,
-                    &mut layer.biases,
                     w_grad,
+                    0.001 // learning rate
+                );
+                updated_network.optimizer.update_biases(
+                    layer_idx,
+                    &mut layer.biases,
                     b_grad,
-                    layer_idx
+                    0.001 // learning rate
                 );
             }
             
@@ -245,10 +251,10 @@ fn main() {
     
     // Benchmark: Compare parallel vs sequential processing
     println!("\nBenchmarking parallel vs sequential processing...");
-    benchmark_parallel_vs_sequential(&q_network, &mut parallel_network);
+    benchmark_parallel_vs_sequential(&mut q_network, &mut parallel_network);
 }
 
-fn benchmark_parallel_vs_sequential(network: &NeuralNetwork, parallel_network: &mut ParallelNetwork) {
+fn benchmark_parallel_vs_sequential(network: &mut NeuralNetwork, parallel_network: &mut ParallelNetwork) {
     let batch_sizes = vec![32, 64, 128, 256, 512];
     
     println!("\nBatch Size | Sequential Time | Parallel Time | Speedup");
