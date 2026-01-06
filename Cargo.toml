@@ -26,6 +26,7 @@ default = []
 python = ["pyo3", "numpy"]
 wasm = ["wasm-bindgen", "serde-wasm-bindgen", "console_error_panic_hook"]
 gpu = ["ocl"]
+gpu-mock = []  # GPU API without OpenCL dependency
 
 [dev-dependencies]
 tempfile = "3.0"
