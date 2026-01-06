@@ -73,6 +73,7 @@ pub mod visualization;
 pub mod memory_optimization;
 pub mod parallel;
 pub mod tensorboard;
+pub mod gpu;
 
 #[cfg(feature = "python")]
 pub mod bindings;

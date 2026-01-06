@@ -1,64 +1,70 @@
 # Future Enhancements for Athena
 
-This document contains only the unimplemented features from the original IMPROVEMENT_PLAN.md and EFFICIENT_IMPLEMENTATION_STRATEGY.md that were deferred to future releases.
-
-## 🧪 Testing Enhancements
-
-### Property-Based Testing
-- [x] Implement property-based tests using proptest or quickcheck
-- [x] Test invariants for neural network operations
+This document tracks remaining features to be implemented.
 
 ## 🚀 Performance Optimizations
 
-### GPU Support
-- [x] GPU support investigation
+### Intel Arc GPU Support (Priority) ✅
+- [x] OpenCL backend integration
+- [x] Intel Arc GPU kernel implementations (matrix multiply, add, multiply, ReLU)
+- [x] GPU-accelerated dense layer
+- [x] Mock GPU backend for WSL2/environments without OpenCL
+- [x] Performance benchmarking example
+- [ ] Automatic CPU/GPU memory management (partial - falls back to CPU)
+- [ ] Backward propagation GPU kernels
+
+### NVIDIA GPU Support
 - [ ] CUDA backend integration
+- [ ] cuDNN integration for optimized operations
+
+### General GPU Features
 - [ ] Automatic CPU/GPU switching
-
-## 🏗️ Advanced Layer Types
-
-### Recurrent Layers
-- [x] LSTM (Long Short-Term Memory)
-- [x] GRU (Gated Recurrent Unit)
-
-### Other Layers
-- [x] Embedding layers for NLP tasks
-
-## 📊 Monitoring & Visualization
-
-### Metrics
-- [x] Full validation metrics support
-
-### Tensorboard Integration
-- [x] Real-time loss visualization
-- [x] Weight and gradient histograms
-- [x] Training curves export
-
-## 🌐 Framework & Platform Support
-
-### Mobile Deployment
-- [ ] iOS support
-- [ ] Android support
-- [ ] Model optimization for mobile
+- [ ] Multi-GPU support
+- [ ] Mixed precision training (FP16/BF16)
 
 ## 🔬 Research Features
 
 ### Meta-Learning
 - [ ] Meta-learning support
 - [ ] Few-shot learning capabilities
+- [ ] MAML (Model-Agnostic Meta-Learning)
 
 ### Exploration Strategies
 - [ ] Curiosity-driven exploration
+- [ ] Intrinsic motivation mechanisms
+- [ ] Count-based exploration
 
 ### Hierarchical RL
 - [ ] Hierarchical reinforcement learning frameworks
 - [ ] Options framework
+- [ ] HAM (Hierarchical Abstract Machines)
 
 ### Multi-Task Learning
 - [ ] Multi-task learning support
 - [ ] Shared representations
 - [ ] Task-specific heads
+- [ ] Progressive neural networks
+
+## 🏗️ Advanced Features
+
+### Transformer Support
+- [ ] Self-attention layers
+- [ ] Multi-head attention
+- [ ] Positional encodings
+- [ ] Transformer blocks
+
+### Advanced Optimizers
+- [ ] AdamW with weight decay
+- [ ] LAMB optimizer
+- [ ] Lookahead optimizer
+- [ ] Gradient centralization
+
+### Model Compression
+- [ ] Quantization (INT8)
+- [ ] Knowledge distillation
+- [ ] Pruning algorithms
+- [ ] Neural architecture search
 
 ## Notes
 
-These features were identified in the original IMPROVEMENT_PLAN.md and EFFICIENT_IMPLEMENTATION_STRATEGY.md but were not critical for the initial production release. They represent potential future enhancements based on user needs and research directions.
+Mobile deployment has been removed as it's not a priority. Focus is now on Intel Arc GPU support and advanced ML research features.
