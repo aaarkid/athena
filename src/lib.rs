@@ -72,6 +72,7 @@ pub mod types;
 pub mod visualization;
 pub mod memory_optimization;
 pub mod parallel;
+pub mod tensorboard;
 
 #[cfg(feature = "python")]
 pub mod bindings;

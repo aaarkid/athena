@@ -1,0 +1,5 @@
+Model Architecture:
+===================
+Layer 0: Dense (2 -> 16)
+Layer 1: Dense (16 -> 8)
+Layer 2: Dense (8 -> 1)

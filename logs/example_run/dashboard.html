@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Athena Training Dashboard - example_run</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .info { background: #f0f0f0; padding: 10px; margin: 10px 0; }
+        .metrics { margin-top: 20px; }
+        pre { background: #f5f5f5; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Athena Training Dashboard</h1>
+    <div class="info">
+        <strong>Run Name:</strong> example_run<br>
+        <strong>Log Directory:</strong> logs/example_run<br>
+    </div>
+    
+    <div class="metrics">
+        <h2>Metrics</h2>
+        <p>To view the metrics:</p>
+        <ol>
+            <li>Open <code>scalars.csv</code> to see scalar metrics over time</li>
+            <li>Open <code>histograms.csv</code> to see weight distributions</li>
+            <li>Open <code>graph.txt</code> to see model architecture</li>
+        </ol>
+        
+        <p>For full Tensorboard visualization, convert the CSV files to TensorBoard format or use a plotting library.</p>
+    </div>
+    
+    <div class="instructions">
+        <h2>Visualization Options</h2>
+        <pre>
+# Option 1: Use Python to plot the CSV files
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('scalars.csv')
+for tag in df['tag'].unique():
+    data = df[df['tag'] == tag]
+    plt.figure()
+    plt.plot(data['step'], data['value'])
+    plt.title(tag)
+    plt.xlabel('Step')
+    plt.ylabel('Value')
+    plt.show()
+
+# Option 2: Import into spreadsheet software
+# The CSV files can be opened in Excel, Google Sheets, etc.
+        </pre>
+    </div>
+</body>
+</html>
