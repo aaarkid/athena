@@ -8,24 +8,24 @@
 //! ## 📚 Documentation Hub
 //! 
 //! ### 🚀 Getting Started
-//! - **[Tutorials](crate::tutorials)** - Comprehensive guides and examples
-//! - **[Getting Started Guide](crate::tutorials::getting_started)** - Your first agent
+//! - **[Tutorials](tutorials)** - Comprehensive guides and examples
+//! - **[Getting Started Guide](tutorials::getting_started)** - Your first agent
 //! - **[Examples](https://github.com/yourusername/athena/tree/main/examples)** - Working code samples
 //! 
 //! ### 🎯 Core Concepts
-//! - **[Neural Networks](crate::network)** - Flexible architecture
-//! - **[RL Agents](crate::agent)** - DQN and other agents
-//! - **[Algorithms](crate::algorithms)** - PPO, SAC, TD3, and more
-//! - **[Optimizers](crate::optimizer)** - Training optimization
+//! - **[Neural Networks](network)** - Flexible architecture
+//! - **[RL Agents](agent)** - DQN and other agents
+//! - **[Algorithms](algorithms)** - PPO, SAC, TD3, and more
+//! - **[Optimizers](optimizer)** - Training optimization
 //! 
 //! ### 🔧 Advanced Topics
-//! - **[Advanced Tutorial](crate::tutorials::advanced)** - Custom layers and techniques
-//! - **[Performance Guide](crate::tutorials::performance)** - Optimization tips
-//! - **[GPU Acceleration](crate::gpu)** - Intel Arc and NVIDIA support
-//! - **[Best Practices](crate::tutorials::best_practices)** - Recommended patterns
+//! - **[Advanced Tutorial](tutorials::advanced)** - Custom layers and techniques
+//! - **[Performance Guide](tutorials::performance)** - Optimization tips
+//! - **[GPU Acceleration](gpu)** - Intel Arc and NVIDIA support
+//! - **[Best Practices](tutorials::best_practices)** - Recommended patterns
 //! 
 //! ### 📖 Reference Guides
-//! - **[Algorithm Selection](crate::tutorials::algorithms)** - Choose the right algorithm
+//! - **[Algorithm Selection](tutorials::algorithms)** - Choose the right algorithm
 //! - **[API Reference](#modules)** - Complete module documentation
 //! 
 //! ## Key Features

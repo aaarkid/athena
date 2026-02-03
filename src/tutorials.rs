@@ -5,28 +5,28 @@
 //! 
 //! ## Available Tutorials
 //! 
-//! - [Getting Started](tutorials::getting_started) - Basic usage and first steps
-//! - [Advanced Features](tutorials::advanced) - Deep dive into advanced capabilities
-//! - [Best Practices](tutorials::best_practices) - Recommended patterns
-//! - [Performance Guide](tutorials::performance) - Optimization tips
-//! - [Algorithm Guide](tutorials::algorithms) - Overview of RL algorithms
+//! - [Getting Started](getting_started) - Basic usage and first steps
+//! - [Advanced Features](advanced) - Deep dive into advanced capabilities
+//! - [Best Practices](best_practices) - Recommended patterns
+//! - [Performance Guide](performance) - Optimization tips
+//! - [Algorithm Guide](algorithms) - Overview of RL algorithms
 //! 
 //! ## Quick Navigation
 //! 
 //! ### For Beginners
-//! Start with the [getting_started](tutorials::getting_started) module to learn:
+//! Start with the [getting_started] module to learn:
 //! - How to create your first agent
 //! - Basic training loops
 //! - Evaluating performance
 //! 
 //! ### For Advanced Users
-//! Check out [advanced](tutorials::advanced) for:
+//! Check out [advanced] for:
 //! - Custom layer implementations
 //! - Advanced training techniques
 //! - Model export and deployment
 //! 
 //! ### For Contributors
-//! See [best_practices](tutorials::best_practices) for:
+//! See [best_practices] for:
 //! - Code organization guidelines
 //! - Testing strategies
 //! - Performance considerations
@@ -284,7 +284,7 @@ pub mod best_practices {
     //! ## Code Organization
     //! 
     //! ### Project Structure
-    //! ```
+    //! ```text
     //! my_rl_project/
     //! ├── src/
     //! │   ├── main.rs
