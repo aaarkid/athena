@@ -46,9 +46,14 @@ athena = { version = "0.1.0", features = ["gpu-mock"] }  # GPU API without OpenC
 ### GPU Support Options
 
 - `gpu` - Full GPU acceleration with OpenCL (requires OpenCL drivers)
-- `gpu-mock` - GPU API with mock backend (no OpenCL required, useful for development)
+- `gpu-mock` - GPU API with mock backend (no OpenCL required, useful for development/testing)
 
 For Windows users having issues with OpenCL, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
+
+**Note:** The `gpu-mock` feature allows you to build and test GPU-accelerated code without OpenCL installed. This is particularly useful for:
+- Windows development without OpenCL SDK
+- CI/CD pipelines
+- Testing GPU API without hardware
 
 ## Usage
 
