@@ -7,7 +7,60 @@ use rand::{Rng, rngs::ThreadRng};
 use ndarray::{Array2, ArrayView1};
 use serde::{Serialize, Deserialize};
 
-/// Enhanced DQN Agent with target network and Double DQN support
+/// Enhanced Deep Q-Network (DQN) Agent with target network and Double DQN support
+/// 
+/// This agent implements the DQN algorithm with several improvements:
+/// - Target network for stable Q-value estimation
+/// - Double DQN to reduce overestimation bias
+/// - Epsilon-greedy exploration strategy
+/// - Experience replay support
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use athena::agent::DqnAgent;
+/// use athena::optimizer::{OptimizerWrapper, Adam};
+/// use athena::replay_buffer::{ReplayBuffer, Experience};
+/// use ndarray::array;
+/// 
+/// // Create a DQN agent for CartPole (4 states, 2 actions)
+/// let layer_sizes = &[4, 128, 128, 2];
+/// let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
+/// let mut agent = DqnAgent::new(
+///     layer_sizes,
+///     0.1,      // epsilon (exploration rate)
+///     optimizer,
+///     1000,     // update target network every 1000 steps
+///     true      // use Double DQN
+/// );
+/// 
+/// // Create experience replay buffer
+/// let mut replay_buffer = ReplayBuffer::new(10000);
+/// 
+/// // Training loop example
+/// let state = array![0.1, -0.2, 0.3, -0.1];
+/// let action = agent.act(state.view());
+/// 
+/// // After environment step...
+/// let next_state = array![0.15, -0.25, 0.35, -0.05];
+/// let reward = 1.0;
+/// let done = false;
+/// 
+/// // Store experience
+/// replay_buffer.add(Experience {
+///     state: state.clone(),
+///     action,
+///     reward,
+///     next_state: next_state.clone(),
+///     done,
+/// });
+/// 
+/// // Train on batch when buffer is ready
+/// if replay_buffer.len() >= 32 {
+///     let batch = replay_buffer.sample(32);
+///     agent.train_on_batch(&batch, 0.99, 0.001);
+/// }
+/// ```
 #[derive(Serialize, Deserialize)]
 pub struct DqnAgent {
     /// Main network for action selection

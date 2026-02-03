@@ -43,4 +43,7 @@ name = "algorithm_comparison"
 harness = false
 
 [package.metadata.docs.rs]
-logo = "assets/favicon.png"
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+default-target = "x86_64-unknown-linux-gnu"
+targets = ["x86_64-pc-windows-msvc", "wasm32-unknown-unknown"]
