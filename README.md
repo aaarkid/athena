@@ -48,7 +48,7 @@ athena = { version = "0.1.0", features = ["gpu-mock"] }  # GPU API without OpenC
 - `gpu` - Full GPU acceleration with OpenCL (requires OpenCL drivers)
 - `gpu-mock` - GPU API with mock backend (no OpenCL required, useful for development/testing)
 
-For Windows users having issues with OpenCL, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
+For Windows users having issues with OpenCL, see [Windows Setup Guide](docs/WINDOWS_SETUP.md).
 
 **Note:** The `gpu-mock` feature allows you to build and test GPU-accelerated code without OpenCL installed. This is particularly useful for:
 - Windows development without OpenCL SDK
@@ -180,3 +180,18 @@ for _ in 0..10000 {
 ```
 
 In this example, the agent learns to always move right in order to maximize its reward. This might seem like a trivial problem, but the process is similar for more complex games. The agent explores the game, learns from the rewards it gets, and adjusts its strategy over time.
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+- [Getting Started Tutorial](docs/tutorial_getting_started.md) - Learn the basics
+- [Advanced Tutorial](docs/tutorial_advanced.md) - Deep dive into advanced features
+- [Algorithms Guide](docs/algorithms_guide.md) - Overview of RL algorithms
+- [Performance Guide](docs/performance_guide.md) - Optimization tips
+- [API Documentation](https://docs.rs/athena) - Full API reference (or run `cargo doc --open`)
+
+For development plans and contributing:
+- [Implementation Status](IMPLEMENTATION_STATUS.md) - Current feature status
+- [Advanced Features Plan](ADVANCED_FEATURES_PLAN.md) - Research roadmap
+- [Future Enhancements](FUTURE_ENHANCEMENTS.md) - Planned improvements
