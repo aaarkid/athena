@@ -32,14 +32,10 @@ pub trait ComputeBackend {
 
 /// GPU backend using OpenCL
 pub struct GpuBackend {
-    context: Context,
-    queue: Queue,
+    pub queue: Queue,
     device: Device,
     device_type: DeviceType,
-    matmul_kernel: Kernel,
-    add_kernel: Kernel,
-    multiply_kernel: Kernel,
-    relu_kernel: Kernel,
+    pub program: Program,
 }
 
 impl GpuBackend {
@@ -77,45 +73,13 @@ impl GpuBackend {
             .build(&context)
             .map_err(|e| format!("Failed to build program: {}", e))?;
         
-        let matmul_kernel = Kernel::builder()
-            .program(&program)
-            .name("matmul")
-            .queue(queue.clone())
-            .build()
-            .map_err(|e| format!("Failed to create matmul kernel: {}", e))?;
-        
-        let add_kernel = Kernel::builder()
-            .program(&program)
-            .name("element_add")
-            .queue(queue.clone())
-            .build()
-            .map_err(|e| format!("Failed to create add kernel: {}", e))?;
-        
-        let multiply_kernel = Kernel::builder()
-            .program(&program)
-            .name("element_multiply")
-            .queue(queue.clone())
-            .build()
-            .map_err(|e| format!("Failed to create multiply kernel: {}", e))?;
-        
-        let relu_kernel = Kernel::builder()
-            .program(&program)
-            .name("relu")
-            .queue(queue.clone())
-            .build()
-            .map_err(|e| format!("Failed to create relu kernel: {}", e))?;
-        
         println!("GPU Backend initialized on: {:?}", device_type);
         
         Ok(Self {
-            context,
             queue,
             device,
             device_type,
-            matmul_kernel,
-            add_kernel,
-            multiply_kernel,
-            relu_kernel,
+            program,
         })
     }
     
@@ -258,7 +222,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(m * k)
-            .copy_host_slice(a.as_slice().unwrap())
+            .copy_host_slice(a.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -266,7 +230,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(k * n)
-            .copy_host_slice(b.as_slice().unwrap())
+            .copy_host_slice(b.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -277,17 +241,23 @@ impl ComputeBackend for GpuBackend {
             .build()
             .map_err(|e| e.to_string())?;
         
-        // Set kernel arguments
-        self.matmul_kernel.set_arg(0, &a_buffer).map_err(|e| e.to_string())?;
-        self.matmul_kernel.set_arg(1, &b_buffer).map_err(|e| e.to_string())?;
-        self.matmul_kernel.set_arg(2, &c_buffer).map_err(|e| e.to_string())?;
-        self.matmul_kernel.set_arg(3, m as i32).map_err(|e| e.to_string())?;
-        self.matmul_kernel.set_arg(4, n as i32).map_err(|e| e.to_string())?;
-        self.matmul_kernel.set_arg(5, k as i32).map_err(|e| e.to_string())?;
+        // Create kernel with arguments
+        let kernel = Kernel::builder()
+            .program(&self.program)
+            .name("matmul")
+            .queue(self.queue.clone())
+            .arg(&a_buffer)
+            .arg(&b_buffer)
+            .arg(&c_buffer)
+            .arg(m as i32)
+            .arg(n as i32)
+            .arg(k as i32)
+            .build()
+            .map_err(|e| format!("Failed to create matmul kernel: {}", e))?;
         
         // Execute kernel
         unsafe {
-            self.matmul_kernel
+            kernel
                 .cmd()
                 .global_work_size([m, n])
                 .enq()
@@ -298,7 +268,8 @@ impl ComputeBackend for GpuBackend {
         let mut result = vec![0.0f32; m * n];
         c_buffer.read(&mut result).enq().map_err(|e| e.to_string())?;
         
-        Ok(Array2::from_shape_vec((m, n), result).unwrap())
+        Array2::from_shape_vec((m, n), result)
+            .map_err(|e| format!("Failed to create result array: {}", e))
     }
     
     fn add(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> Result<Array2<f32>, String> {
@@ -314,7 +285,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(size)
-            .copy_host_slice(a.as_slice().unwrap())
+            .copy_host_slice(a.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -322,7 +293,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(size)
-            .copy_host_slice(b.as_slice().unwrap())
+            .copy_host_slice(b.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -333,15 +304,21 @@ impl ComputeBackend for GpuBackend {
             .build()
             .map_err(|e| e.to_string())?;
         
-        // Set kernel arguments
-        self.add_kernel.set_arg(0, &a_buffer).map_err(|e| e.to_string())?;
-        self.add_kernel.set_arg(1, &b_buffer).map_err(|e| e.to_string())?;
-        self.add_kernel.set_arg(2, &c_buffer).map_err(|e| e.to_string())?;
-        self.add_kernel.set_arg(3, size as i32).map_err(|e| e.to_string())?;
+        // Create kernel with arguments
+        let kernel = Kernel::builder()
+            .program(&self.program)
+            .name("element_add")
+            .queue(self.queue.clone())
+            .arg(&a_buffer)
+            .arg(&b_buffer)
+            .arg(&c_buffer)
+            .arg(size as i32)
+            .build()
+            .map_err(|e| format!("Failed to create add kernel: {}", e))?;
         
         // Execute kernel
         unsafe {
-            self.add_kernel
+            kernel
                 .cmd()
                 .global_work_size(size)
                 .enq()
@@ -352,7 +329,8 @@ impl ComputeBackend for GpuBackend {
         let mut result = vec![0.0f32; size];
         c_buffer.read(&mut result).enq().map_err(|e| e.to_string())?;
         
-        Ok(Array2::from_shape_vec(shape, result).unwrap())
+        Array2::from_shape_vec(shape, result)
+            .map_err(|e| format!("Failed to create result array: {}", e))
     }
     
     fn multiply(&self, a: ArrayView2<f32>, b: ArrayView2<f32>) -> Result<Array2<f32>, String> {
@@ -368,7 +346,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(size)
-            .copy_host_slice(a.as_slice().unwrap())
+            .copy_host_slice(a.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -376,7 +354,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(size)
-            .copy_host_slice(b.as_slice().unwrap())
+            .copy_host_slice(b.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -387,15 +365,21 @@ impl ComputeBackend for GpuBackend {
             .build()
             .map_err(|e| e.to_string())?;
         
-        // Set kernel arguments
-        self.multiply_kernel.set_arg(0, &a_buffer).map_err(|e| e.to_string())?;
-        self.multiply_kernel.set_arg(1, &b_buffer).map_err(|e| e.to_string())?;
-        self.multiply_kernel.set_arg(2, &c_buffer).map_err(|e| e.to_string())?;
-        self.multiply_kernel.set_arg(3, size as i32).map_err(|e| e.to_string())?;
+        // Create kernel with arguments
+        let kernel = Kernel::builder()
+            .program(&self.program)
+            .name("element_multiply")
+            .queue(self.queue.clone())
+            .arg(&a_buffer)
+            .arg(&b_buffer)
+            .arg(&c_buffer)
+            .arg(size as i32)
+            .build()
+            .map_err(|e| format!("Failed to create multiply kernel: {}", e))?;
         
         // Execute kernel
         unsafe {
-            self.multiply_kernel
+            kernel
                 .cmd()
                 .global_work_size(size)
                 .enq()
@@ -406,7 +390,8 @@ impl ComputeBackend for GpuBackend {
         let mut result = vec![0.0f32; size];
         c_buffer.read(&mut result).enq().map_err(|e| e.to_string())?;
         
-        Ok(Array2::from_shape_vec(shape, result).unwrap())
+        Array2::from_shape_vec(shape, result)
+            .map_err(|e| format!("Failed to create result array: {}", e))
     }
     
     fn relu(&self, input: ArrayView2<f32>) -> Result<Array2<f32>, String> {
@@ -418,7 +403,7 @@ impl ComputeBackend for GpuBackend {
             .queue(self.queue.clone())
             .flags(ocl::flags::MEM_READ_ONLY)
             .len(size)
-            .copy_host_slice(input.as_slice().unwrap())
+            .copy_host_slice(input.as_slice().ok_or("Failed to convert array to slice")?)
             .build()
             .map_err(|e| e.to_string())?;
         
@@ -429,14 +414,20 @@ impl ComputeBackend for GpuBackend {
             .build()
             .map_err(|e| e.to_string())?;
         
-        // Set kernel arguments
-        self.relu_kernel.set_arg(0, &input_buffer).map_err(|e| e.to_string())?;
-        self.relu_kernel.set_arg(1, &output_buffer).map_err(|e| e.to_string())?;
-        self.relu_kernel.set_arg(2, size as i32).map_err(|e| e.to_string())?;
+        // Create kernel with arguments
+        let kernel = Kernel::builder()
+            .program(&self.program)
+            .name("relu")
+            .queue(self.queue.clone())
+            .arg(&input_buffer)
+            .arg(&output_buffer)
+            .arg(size as i32)
+            .build()
+            .map_err(|e| format!("Failed to create relu kernel: {}", e))?;
         
         // Execute kernel
         unsafe {
-            self.relu_kernel
+            kernel
                 .cmd()
                 .global_work_size(size)
                 .enq()
@@ -447,7 +438,8 @@ impl ComputeBackend for GpuBackend {
         let mut result = vec![0.0f32; size];
         output_buffer.read(&mut result).enq().map_err(|e| e.to_string())?;
         
-        Ok(Array2::from_shape_vec(shape, result).unwrap())
+        Array2::from_shape_vec(shape, result)
+            .map_err(|e| format!("Failed to create result array: {}", e))
     }
     
     fn device_type(&self) -> DeviceType {
