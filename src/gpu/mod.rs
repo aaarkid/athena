@@ -3,6 +3,8 @@
 //! This module provides GPU compute backends for accelerating neural network operations.
 //! Currently supports Intel Arc GPUs via OpenCL.
 
+pub mod constants;
+
 #[cfg(feature = "gpu")]
 pub mod backend;
 
@@ -12,11 +14,23 @@ pub mod kernels;
 #[cfg(feature = "gpu")]
 pub mod memory;
 
+#[cfg(feature = "gpu")]
+pub mod layers;
+
+#[cfg(feature = "gpu")]
+pub mod optimized_layer;
+
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub mod mock_backend;
 
 #[cfg(feature = "gpu")]
 pub use backend::{GpuBackend, ComputeBackend, DeviceType};
+
+#[cfg(feature = "gpu")]
+pub use layers::GpuDenseLayer;
+
+#[cfg(feature = "gpu")]
+pub use optimized_layer::{GpuOptimizedNetwork, ADDITIONAL_KERNELS};
 
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub use mock_backend::MockGpuBackend;
