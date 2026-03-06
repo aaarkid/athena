@@ -8,7 +8,7 @@
 //! - Advanced debugging and visualization
 
 use athena::algorithms::{SACAgent, SACBuilder};
-use athena::optimizer::{OptimizerWrapper, Adam};
+use athena::optimizer::OptimizerWrapper;
 use athena::replay_buffer::PrioritizedReplayBuffer;
 use ndarray::{Array1, array};
 use rand::Rng;

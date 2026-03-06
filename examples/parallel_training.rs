@@ -5,7 +5,7 @@
 
 use athena::network::NeuralNetwork;
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::optimizer::OptimizerWrapper;
 use athena::parallel::{ParallelNetwork, ParallelGradients, ParallelReplayBuffer, ParallelAugmentation};
 use athena::replay_buffer::Experience;
 use athena::metrics::MetricsTracker;

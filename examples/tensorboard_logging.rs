@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     
     // Training loop with logging
     println!("Training and logging metrics...");
-    let mut rng = rand::thread_rng();
+    let rng = rand::thread_rng();
     
     for epoch in 0..100 {
         let mut epoch_loss = 0.0;
