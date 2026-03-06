@@ -3,3 +3,8 @@
 /.vscode
 
 symbols-list.txt
+
+# Coup analysis docs
+COUP_ANALYSIS.md
+*coup*.md
+*Coup*.md

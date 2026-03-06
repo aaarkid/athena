@@ -45,7 +45,31 @@
 - **Integration Tests**: End-to-end testing
 - **Property Tests**: Invariant checking
 
+### Multi-Agent Extensions 🆕
+- **Action Masking**: Invalid action prevention with MaskedAgent trait
+- **Belief States**: Partial observability support with ParticleFilter and HistoryBelief  
+- **Multi-Agent Environments**: Turn-based and simultaneous action support
+- **Self-Play Training**: Population-based training with ELO ratings
+- **Communication Channels**: Message passing between agents
+- **Feature Flags**: `action-masking`, `belief-states`, `multi-agent`, `cfr`
+
 ## 🚧 In Progress / Planned
+
+### Multi-Agent Features (Phase 4 - Advanced)
+1. **Counterfactual Regret Minimization (CFR)**
+   - Nash equilibrium computation
+   - Extensive form game solver
+   - Strategy iteration
+
+2. **Advanced Population Training**
+   - Genetic algorithms integration
+   - Evolutionary strategies
+   - Diversity metrics
+
+3. **League Play Systems**
+   - Main agents, exploiters, league exploiters
+   - Matchmaking algorithms
+   - Tournament brackets
 
 ### Advanced Features (from ADVANCED_FEATURES_PLAN.md)
 

@@ -78,6 +78,8 @@ pub mod gru;
 pub mod embedding;
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub mod gpu_dense;
+#[cfg(feature = "action-masking")]
+pub mod masked;
 
 pub use traits::Layer as LayerTrait;
 pub use dense::{DenseLayer, Layer};
@@ -91,3 +93,5 @@ pub use gru::{GRULayer, GRUGradients};
 pub use embedding::EmbeddingLayer;
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub use gpu_dense::GpuDenseLayer;
+#[cfg(feature = "action-masking")]
+pub use masked::{MaskedLayer, MaskedSoftmax};

@@ -18,6 +18,8 @@ pub struct EmbeddingLayer {
     pub embeddings: Array2<f32>,
     /// Cache for backward pass
     last_indices: Option<Vec<usize>>,
+    /// Dummy bias for trait compatibility
+    dummy_bias: Array1<f32>,
 }
 
 impl EmbeddingLayer {
@@ -36,6 +38,7 @@ impl EmbeddingLayer {
             embedding_dim,
             embeddings,
             last_indices: None,
+            dummy_bias: Array1::zeros(embedding_dim),
         }
     }
     
@@ -51,6 +54,7 @@ impl EmbeddingLayer {
             embedding_dim,
             embeddings,
             last_indices: None,
+            dummy_bias: Array1::zeros(embedding_dim),
         }
     }
     
@@ -207,13 +211,8 @@ impl LayerTrait for EmbeddingLayer {
     
     fn biases_mut(&mut self) -> &mut Array1<f32> {
         // Embeddings don't have biases, return a dummy mutable reference
-        static mut DUMMY_BIAS: Option<Array1<f32>> = None;
-        unsafe {
-            if DUMMY_BIAS.is_none() {
-                DUMMY_BIAS = Some(Array1::zeros(self.embedding_dim));
-            }
-            DUMMY_BIAS.as_mut().unwrap()
-        }
+        // Store dummy bias as part of the struct to avoid static mutable
+        &mut self.dummy_bias
     }
     
     fn weights(&self) -> &Array2<f32> {
@@ -222,13 +221,7 @@ impl LayerTrait for EmbeddingLayer {
     
     fn biases(&self) -> &Array1<f32> {
         // Embeddings don't have biases, return a dummy reference
-        static mut DUMMY_BIAS: Option<Array1<f32>> = None;
-        unsafe {
-            if DUMMY_BIAS.is_none() {
-                DUMMY_BIAS = Some(Array1::zeros(self.embedding_dim));
-            }
-            DUMMY_BIAS.as_ref().unwrap()
-        }
+        &self.dummy_bias
     }
     
     fn output_size(&self) -> usize {
