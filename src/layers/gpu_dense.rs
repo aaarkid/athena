@@ -89,7 +89,10 @@ impl GpuDenseLayer {
                 };
                 
                 // Add bias (on CPU for now - could be optimized)
-                let z_with_bias = &z + &self.biases;
+                let mut z_with_bias = z;
+                for mut row in z_with_bias.rows_mut() {
+                    row += &self.biases;
+                }
                 
                 // Apply activation (on GPU if supported)
                 match self.activation {
@@ -125,7 +128,10 @@ impl GpuDenseLayer {
                 };
                 
                 // Add bias (broadcasting)
-                let z_with_bias = &z + &self.biases;
+                let mut z_with_bias = z;
+                for mut row in z_with_bias.rows_mut() {
+                    row += &self.biases;
+                }
                 Ok(z_with_bias)
             },
             None => Err("No GPU backend available".to_string()),
@@ -200,27 +206,14 @@ impl LayerTrait for GpuDenseLayer {
                 // Bias gradients: sum across batch dimension
                 let bias_gradients = adjusted_error.sum_axis(Axis(0));
                 
-                // Input errors for backpropagation: adjusted_error × weights^T
-                let input_errors = match backend_type {
-                    #[cfg(feature = "gpu")]
-                    GpuBackendType::Real(backend) => {
-                        backend.lock().unwrap().matmul(adjusted_error.view(), self.weights.t())
-                            .unwrap_or_else(|_| adjusted_error.dot(&self.weights.t()))
-                    },
-                    GpuBackendType::Mock(backend) => {
-                        backend.lock().unwrap().matmul(adjusted_error.view(), self.weights.t())
-                            .unwrap_or_else(|_| adjusted_error.dot(&self.weights.t()))
-                    },
-                };
-                
-                (input_errors, weight_gradients, bias_gradients)
+                // Return adjusted_error as the first element (to match DenseLayer behavior)
+                (adjusted_error, weight_gradients, bias_gradients)
             },
             None => {
                 // CPU fallback
                 let weight_gradients = inputs.t().dot(&adjusted_error);
                 let bias_gradients = adjusted_error.sum_axis(Axis(0));
-                let input_errors = adjusted_error.dot(&self.weights.t());
-                (input_errors, weight_gradients, bias_gradients)
+                (adjusted_error, weight_gradients, bias_gradients)
             }
         }
     }
