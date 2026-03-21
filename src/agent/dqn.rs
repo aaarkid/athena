@@ -30,8 +30,8 @@ use serde::{Serialize, Deserialize};
 ///     layer_sizes,
 ///     0.1,      // epsilon (exploration rate)
 ///     optimizer,
-///     1000,     // update target network every 1000 steps
-///     true      // use Double DQN
+///     1000,     // target_update_freq
+///     true      // use_double_dqn
 /// );
 /// 
 /// // Create experience replay buffer
@@ -58,7 +58,7 @@ use serde::{Serialize, Deserialize};
 /// // Train on batch when buffer is ready
 /// if replay_buffer.len() >= 32 {
 ///     let batch = replay_buffer.sample(32);
-///     agent.train_on_batch(&batch, 0.99, 0.001);
+///     let loss = agent.train_on_batch(&batch, 0.99, 0.001).unwrap();
 /// }
 /// ```
 #[derive(Serialize, Deserialize)]

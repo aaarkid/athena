@@ -107,7 +107,7 @@ pub mod getting_started {
     //!             // Train when enough experiences
     //!             if replay_buffer.len() >= 32 {
     //!                 let batch = replay_buffer.sample(32);
-    //!                 agent.train_on_batch(&batch, 0.99, 0.001);
+    //!                 agent.train_on_batch(&batch, 0.99, 0.001)?;
     //!             }
     //!             
     //!             total_reward += reward;
@@ -221,24 +221,25 @@ pub mod advanced {
     //! ### Learning Rate Scheduling
     //! 
     //! ```rust
-    //! use athena::optimizer::{LearningRateScheduler, SchedulerType};
+    //! use athena::optimizer::LearningRateScheduler;
     //! 
-    //! let scheduler = LearningRateScheduler::new(
-    //!     SchedulerType::CosineAnnealing {
-    //!         initial_lr: 0.001,
-    //!         min_lr: 0.0001,
-    //!         period: 1000,
-    //!     }
-    //! );
+    //! let scheduler = LearningRateScheduler::CosineAnnealing {
+    //!     max_lr: 0.001,
+    //!     min_lr: 0.0001,
+    //!     period: 1000,
+    //! };
     //! ```
     //! 
     //! ### Gradient Clipping
     //! 
-    //! ```rust
-    //! use athena::optimizer::gradient_clip;
+    //! Gradient clipping is implemented as part of the optimizer:
     //! 
-    //! // Clip gradients to prevent exploding gradients
-    //! gradient_clip::clip_grad_norm(&mut network, 1.0);
+    //! ```rust
+    //! use athena::optimizer::{OptimizerWrapper, Adam};
+    //! 
+    //! // Create optimizer with gradient clipping
+    //! let mut optimizer = OptimizerWrapper::Adam(Adam::new(0.001));
+    //! // Gradient clipping is applied during optimization
     //! ```
     //! 
     //! ## Parallel Training
@@ -259,9 +260,11 @@ pub mod advanced {
     //! ```rust
     //! #[cfg(feature = "gpu")]
     //! use athena::layers::GpuDenseLayer;
+    //! #[cfg(feature = "gpu")]
+    //! use athena::activations::Activation;
     //! 
     //! #[cfg(feature = "gpu")]
-    //! let gpu_layer = GpuDenseLayer::new(512, 256, Activation::Relu)?;
+    //! let gpu_layer = GpuDenseLayer::new(512, 256, Activation::Relu).unwrap();
     //! ```
     //! 
     //! ## Model Export
@@ -269,9 +272,10 @@ pub mod advanced {
     //! Export models for deployment:
     //! 
     //! ```rust
-    //! use athena::export::onnx::export_network_to_onnx;
+    //! use athena::export::onnx::OnnxExporter;
+    //! use std::path::Path;
     //! 
-    //! export_network_to_onnx(&network, "model.onnx")?;
+    //! OnnxExporter::export(&network, Path::new("model.onnx")).unwrap();
     //! ```
 }
 
@@ -370,31 +374,34 @@ pub mod performance {
     //! use athena::memory_optimization::ArrayPool;
     //! 
     //! let mut pool = ArrayPool::new(100);
-    //! let array = pool.get_1d(1024);
+    //! let array = pool.get_array_1d(1024);
     //! // Use array...
-    //! pool.return_1d(array);
+    //! pool.return_array_1d(array);
     //! ```
     //! 
     //! ### Gradient Accumulation
     //! For large batches that don't fit in memory:
     //! ```rust
     //! use athena::memory_optimization::GradientAccumulator;
+    //! use athena::network::NeuralNetwork;
     //! 
+    //! // Assuming network is already created
     //! let mut accumulator = GradientAccumulator::new(&network);
-    //! for mini_batch in large_batch.chunks(32) {
-    //!     accumulator.accumulate(mini_batch);
-    //! }
-    //! accumulator.apply(&mut network, optimizer);
+    //! 
+    //! // Process mini-batches and accumulate gradients
+    //! // (You would compute gradients for each mini-batch)
+    //! let (avg_weight_grads, avg_bias_grads) = accumulator.get_gradients();
     //! ```
     //! 
     //! ## Parallelization
     //! 
     //! ### Data Parallel Training
     //! ```rust
-    //! use athena::parallel::DataParallelTrainer;
+    //! use athena::parallel::ParallelNetwork;
     //! 
-    //! let trainer = DataParallelTrainer::new(num_threads);
-    //! trainer.train_epoch(&mut network, &data, &optimizer);
+    //! // Use ParallelNetwork for multi-threaded forward passes
+    //! let parallel_net = ParallelNetwork::from_network(&network, 4);
+    //! let outputs = parallel_net.forward_batch_parallel(inputs.view());
     //! ```
     //! 
     //! ## GPU Acceleration Tips
@@ -440,16 +447,18 @@ pub mod algorithms {
     //! Great general-purpose algorithm:
     //! ```rust
     //! use athena::algorithms::ppo::PPOAgent;
+    //! use athena::optimizer::{OptimizerWrapper, Adam};
     //! 
+    //! let optimizer = OptimizerWrapper::Adam(Adam::new(0.0003));
     //! let ppo = PPOAgent::new(
-    //!     state_dim,
-    //!     action_dim,
-    //!     &[64, 64],
+    //!     4,         // state_size
+    //!     2,         // action_size
+    //!     &[64, 64], // hidden_sizes
     //!     optimizer,
-    //!     0.2,   // clip epsilon
-    //!     0.01,  // value loss coefficient
-    //!     0.01,  // entropy coefficient
-    //!     4      // epochs per update
+    //!     0.99,      // gamma
+    //!     0.95,      // gae_lambda
+    //!     0.2,       // clip_param
+    //!     4          // ppo_epochs
     //! );
     //! ```
     //! 
@@ -458,16 +467,18 @@ pub mod algorithms {
     //! Excellent for continuous control:
     //! ```rust
     //! use athena::algorithms::sac::SACAgent;
+    //! use athena::optimizer::{OptimizerWrapper, Adam};
     //! 
+    //! let optimizer = OptimizerWrapper::Adam(Adam::new(0.0003));
     //! let sac = SACAgent::new(
-    //!     state_dim,
-    //!     action_dim,
-    //!     &[256, 256],
+    //!     4,           // state_size
+    //!     2,           // action_size
+    //!     &[256, 256], // hidden_sizes
     //!     optimizer,
-    //!     0.99,  // gamma
-    //!     0.005, // tau (soft update)
-    //!     0.2,   // alpha (entropy)
-    //!     true   // automatic entropy tuning
+    //!     0.99,        // gamma
+    //!     0.005,       // tau (soft update)
+    //!     0.2,         // alpha (entropy)
+    //!     true         // auto_alpha
     //! );
     //! ```
     //! 
