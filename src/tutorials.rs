@@ -240,10 +240,16 @@ pub mod advanced {
     //! 
     //! Utilize multiple CPU cores for faster training:
     //! 
-    //! ```rust
+    //! ```rust,no_run
     //! use athena::parallel::ParallelNetwork;
+    //! use athena::network::NeuralNetwork;
+    //! use athena::activations::Activation;
+    //! use athena::optimizer::{OptimizerWrapper, SGD};
+    //! use ndarray::Array2;
     //! 
-    //! let parallel_net = ParallelNetwork::from_network(&network, 4);
+    //! let network = NeuralNetwork::new(&[784, 128, 10], &[Activation::Relu, Activation::Linear], OptimizerWrapper::SGD(SGD::new()));
+    //! let mut parallel_net = ParallelNetwork::from_network(&network, 4);
+    //! let inputs = Array2::zeros((32, 784));
     //! let outputs = parallel_net.forward_batch_parallel(inputs.view());
     //! ```
     //! 
@@ -328,7 +334,7 @@ pub mod best_practices {
     //! let batch_size = 32;
     //! let hidden_size = 128;
     //! // Pre-allocate arrays for repeated operations
-    //! let mut buffer = Array2::zeros((batch_size, hidden_size));
+    //! let mut buffer = Array2::<f32>::zeros((batch_size, hidden_size));
     //! ```
     //! 
     //! ## Common Pitfalls
