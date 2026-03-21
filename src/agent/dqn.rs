@@ -39,7 +39,7 @@ use serde::{Serialize, Deserialize};
 /// 
 /// // Training loop example
 /// let state = array![0.1, -0.2, 0.3, -0.1];
-/// let action = agent.act(state.view());
+/// let action = agent.act(state.view()).unwrap();
 /// 
 /// // After environment step...
 /// let next_state = array![0.15, -0.25, 0.35, -0.05];

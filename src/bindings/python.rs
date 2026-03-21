@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::exceptions::PyValueError;
-use ndarray::{Array1, Array2};
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 
 use crate::network::NeuralNetwork;
@@ -9,7 +8,7 @@ use crate::agent::DqnAgent;
 use crate::activations::Activation;
 use crate::optimizer::{OptimizerWrapper, SGD, Adam, RMSProp};
 use crate::replay_buffer::{ReplayBuffer, Experience};
-use crate::layers::Layer;
+use crate::layers::{Layer, traits::Layer as LayerTrait};
 
 /// Python wrapper for NeuralNetwork
 #[pyclass(name = "NeuralNetwork")]
@@ -140,7 +139,7 @@ impl PyDqnAgent {
     
     fn act<'py>(
         &mut self,
-        py: Python<'py>,
+        _py: Python<'py>,
         state: PyReadonlyArray1<f32>,
     ) -> PyResult<usize> {
         let state = state.as_array();
@@ -155,8 +154,7 @@ impl PyDqnAgent {
         learning_rate: f32,
     ) -> PyResult<f32> {
         let batch = replay_buffer.inner.sample(batch_size);
-        let batch_refs: Vec<&Experience> = batch.iter().collect();
-        self.inner.train_on_batch(&batch_refs, 0.99, learning_rate)
+        self.inner.train_on_batch(&batch, 0.99, learning_rate)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
     
