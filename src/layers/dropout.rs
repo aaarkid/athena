@@ -25,7 +25,7 @@ pub struct DropoutLayer {
 impl DropoutLayer {
     /// Create a new dropout layer
     pub fn new(size: usize, dropout_rate: f32) -> Self {
-        assert!(dropout_rate >= 0.0 && dropout_rate < 1.0, 
+        assert!((0.0..1.0).contains(&dropout_rate), 
                 "Dropout rate must be in [0, 1)");
         
         DropoutLayer {

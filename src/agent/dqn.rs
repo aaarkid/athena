@@ -166,7 +166,7 @@ impl DqnAgent {
     
     /// Update epsilon for exploration decay
     pub fn update_epsilon(&mut self, epsilon: f32) {
-        self.epsilon = epsilon.max(0.0).min(1.0);
+        self.epsilon = epsilon.clamp(0.0, 1.0);
     }
     
     /// Update target network weights from main network

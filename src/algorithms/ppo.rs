@@ -189,8 +189,10 @@ impl PPOAgent {
         for i in (0..n).rev() {
             let next_value = if i == n - 1 {
                 if buffer.dones[i] { 0.0 } else { last_value }
+            } else if buffer.dones[i] {
+                0.0
             } else {
-                if buffer.dones[i] { 0.0 } else { buffer.values[i + 1] }
+                buffer.values[i + 1]
             };
             
             let delta = buffer.rewards[i] + self.gamma * next_value - buffer.values[i];
