@@ -11,7 +11,7 @@ fn main() {
     // Vocabulary setup
     let vocab_size = 1000;  // Small vocabulary for example
     let embedding_dim = 50;
-    let max_sequence_length = 10;
+    let _max_sequence_length = 10;
     
     // Create embedding layer
     let mut embedding_layer = EmbeddingLayer::new(vocab_size, embedding_dim);

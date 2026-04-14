@@ -8,7 +8,7 @@ use crate::agent::DqnAgent;
 use crate::activations::Activation;
 use crate::optimizer::{OptimizerWrapper, SGD, Adam, RMSProp};
 use crate::replay_buffer::{ReplayBuffer, Experience};
-use crate::layers::{Layer, traits::Layer as LayerTrait};
+use crate::layers::Layer;
 
 /// Python wrapper for NeuralNetwork
 #[pyclass(name = "NeuralNetwork")]

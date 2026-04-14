@@ -133,6 +133,7 @@ impl Pendulum {
 }
 
 /// Configuration for SAC training
+#[allow(dead_code)]
 struct SACConfig {
     // Network architecture
     hidden_dims: Vec<usize>,
@@ -378,7 +379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                       (config.per_beta_end - config.per_beta_start) * 
                       (total_steps as f32 / config.max_steps as f32);
             
-            let (batch, weights, indices) = buffer.sample_with_weights(config.batch_size, beta);
+            let (_batch, _weights, _indices) = buffer.sample_with_weights(config.batch_size, beta);
             
             // Train SAC (simplified - would need proper SACExperience type)
             // In a real implementation, you'd convert the batch to SACExperience

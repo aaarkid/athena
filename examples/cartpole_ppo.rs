@@ -171,6 +171,7 @@ impl StateNormalizer {
 }
 
 /// Training configuration
+#[allow(dead_code)]
 struct Config {
     // PPO hyperparameters
     hidden_dims: Vec<usize>,
