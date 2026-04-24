@@ -102,13 +102,13 @@ fn main() {
     let gamma = 0.95;
     
     let mut episode_rewards = Vec::new();
-    let mut total_steps = 0;
+    let mut _total_steps = 0;
     
     for episode in 0usize..episodes {
         let mut state = env.reset();
         let mut episode_reward = 0.0;
         
-        for step in 0..max_steps {
+        for _step in 0..max_steps {
             // Get action
             let action = agent.act(state.view()).unwrap();
             
@@ -132,7 +132,7 @@ fn main() {
             }
             
             state = next_state;
-            total_steps += 1;
+            _total_steps += 1;
             
             if done {
                 break;

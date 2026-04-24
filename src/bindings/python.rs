@@ -1,3 +1,5 @@
+#![allow(non_local_definitions)]
+
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::exceptions::PyValueError;
@@ -264,6 +266,7 @@ fn athena_py(_py: Python, m: &PyModule) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layers::traits::Layer;
     
     #[test]
     fn test_dummy_layers() {
