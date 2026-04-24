@@ -46,6 +46,10 @@ crate-type = ["cdylib", "rlib"]
 name = "algorithm_comparison"
 harness = false
 
+[[bench]]
+name = "cartpole_benchmark"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]

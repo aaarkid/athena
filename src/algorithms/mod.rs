@@ -78,6 +78,6 @@ pub mod sac;
 pub mod td3;
 
 pub use a2c::{A2CAgent, A2CBuilder};
-pub use ppo::{PPOAgent, PPOBuilder};
+pub use ppo::{PPOAgent, PPOBuilder, PPORolloutBuffer};
 pub use sac::{SACAgent, SACBuilder};
 pub use td3::{TD3Agent, TD3Builder};
