@@ -364,7 +364,7 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
         let mut episode_reward = 0.0;
         
         // Progress tracking
-        if episode % 50 == 0 || episode < 5 {
+        if episode % 20 == 0 {
             println!("SAC Episode {}/{}, experiences: {}", episode, episodes, sac_experiences.len());
         }
         
@@ -373,17 +373,9 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
             // Select action
             let action = if episode < 10 {
                 // Random exploration at start
-                let random_action = array![rand::random::<f32>() * 2.0 - 1.0];
-                if episode == 0 && steps == 0 {
-                    println!("Episode 0, Step 0: Random action: {:?}", random_action);
-                }
-                random_action
+                array![rand::random::<f32>() * 2.0 - 1.0]
             } else {
-                let selected_action = agent.act(state.view(), false).unwrap();
-                if episode == 10 && steps == 0 {
-                    println!("Episode 10, Step 0: SAC action: {:?}", selected_action);
-                }
-                selected_action
+                agent.act(state.view(), false).unwrap()
             };
             
             // Step
@@ -391,10 +383,6 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
             episode_reward += reward;
             steps += 1;
             
-            if episode == 0 && steps <= 5 {
-                println!("  Step {}: pos={:.3}, vel={:.3}, action={:.3}, reward={:.1}, done={}", 
-                         steps, state[0], state[1], action[0], reward, done);
-            }
             
             // Store continuous action experiences for SAC training
             sac_experiences.push(athena::algorithms::SACExperience {
@@ -407,9 +395,6 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
             
             // Train SAC when we have enough experiences
             if sac_experiences.len() >= 256 {
-                if sac_experiences.len() == 256 {
-                    println!("SAC: Starting training at {} experiences", sac_experiences.len());
-                }
                 // Sample batch and train
                 use rand::seq::SliceRandom;
                 let mut rng = rand::thread_rng();
@@ -436,9 +421,6 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
             
             // Add step limit to prevent infinite loops
             if done || episode_reward < -200.0 || steps >= 200 {
-                if steps >= 200 && episode == 0 {
-                    println!("SAC Episode 0 hit step limit. Action: {:?}, State: {:?}", action, state);
-                }
                 break;
             }
         }
@@ -595,13 +577,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting RL Algorithm Benchmark Comparison");
     println!("==========================================\n");
     
-    let episodes = 500;  // Limit for benchmarking
+    // let episodes = 500;  // Full benchmark
+    let episodes = 100;  // Reduced for faster testing
     
     let mut results = Vec::new();
     
     // Run benchmarks
-    results.push(benchmark_dqn(episodes));
-    results.push(benchmark_ppo(episodes));
+    // TEMP: Skip DQN and PPO for debugging
+    // results.push(benchmark_dqn(episodes));
+    // results.push(benchmark_ppo(episodes));
     results.push(benchmark_sac(episodes));
     // TD3 and A2C would be similar
     
