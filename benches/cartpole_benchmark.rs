@@ -306,10 +306,23 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
         let mut state = env.reset();
         let mut episode_reward = 0.0;
         
-        for _ in 0..200 {
+        if episode == 0 {
+            println!("SAC Episode 0 starting, state: {:?}", state);
+        }
+        
+        let mut steps = 0;
+        for step_limit in 0..200 {
+            steps += 1;
             let action = agent.act(state.view(), false).unwrap();
+            if episode == 0 && steps <= 3 {
+                println!("  Step {}: action={:?}, experiences={}", steps, action, sac_experiences.len());
+            }
             let (next_state, reward, done) = env.step_continuous(&action);
             episode_reward += reward;
+            
+            if episode == 0 && step_limit > 190 {
+                println!("  Warning: Episode 0 approaching step limit at step {}", step_limit);
+            }
             
             sac_experiences.push(SACExperience {
                 state: state.clone(),
@@ -319,15 +332,32 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
                 done,
             });
             
-            // Train when we have enough experiences
-            if sac_experiences.len() >= 256 {
+            // Train when we have enough experiences (reduced for debugging)
+            if sac_experiences.len() >= 32 {
+                if sac_experiences.len() == 32 {
+                    println!("  Starting SAC training at step {}", steps);
+                }
+                
                 use rand::seq::SliceRandom;
                 let mut rng = rand::thread_rng();
-                let mut batch = sac_experiences.clone();
-                batch.shuffle(&mut rng);
-                batch.truncate(256);
                 
+                // More efficient sampling
+                let indices: Vec<usize> = (0..sac_experiences.len()).collect();
+                let batch_size = 32.min(sac_experiences.len());
+                let sampled_indices: Vec<_> = indices.choose_multiple(&mut rng, batch_size).cloned().collect();
+                let batch: Vec<SACExperience> = sampled_indices
+                    .iter()
+                    .map(|&i| sac_experiences[i].clone())
+                    .collect();
+                
+                if episode == 0 && sac_experiences.len() <= 35 {
+                    println!("  Calling SAC update with batch size {}...", batch.len());
+                }
+                let update_start = Instant::now();
                 let _ = agent.update(&batch, 3e-4);
+                if episode == 0 && sac_experiences.len() <= 35 {
+                    println!("  SAC update complete in {:?}", update_start.elapsed());
+                }
                 
                 // Keep buffer size manageable
                 if sac_experiences.len() > 10000 {
@@ -340,6 +370,11 @@ fn benchmark_sac(episodes: usize) -> BenchmarkResult {
         }
         
         episode_rewards.push(episode_reward);
+        
+        if episode == 0 {
+            println!("SAC Episode 0 complete: steps={}, reward={}, experiences={}", 
+                     steps, episode_reward, sac_experiences.len());
+        }
         
         // Check if solved
         if episode >= 100 && solved_episode.is_none() {
