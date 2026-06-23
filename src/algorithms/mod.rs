@@ -77,7 +77,7 @@ pub mod ppo;
 pub mod sac;
 pub mod td3;
 
-pub use a2c::{A2CAgent, A2CBuilder};
+pub use a2c::{A2CAgent, A2CBuilder, A2CExperience};
 pub use ppo::{PPOAgent, PPOBuilder, PPORolloutBuffer};
 pub use sac::{SACAgent, SACBuilder, SACExperience};
-pub use td3::{TD3Agent, TD3Builder};
+pub use td3::{TD3Agent, TD3Builder, TD3Experience};

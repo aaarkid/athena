@@ -15,9 +15,9 @@ Hardware: x86_64 architecture
 
 | Algorithm | Training Time (s) | Inference Time (μs) | Memory (MB) |
 |-----------|-------------------|---------------------|-------------|
-| DQN | 53.39 | 17 | 1.02 |
-| PPO | 3.91 | 37 | 1.02 |
-| SAC | 35.80 | 18 | 1.02 |
+| DQN | 36.46 | 28 | 1.02 |
+| PPO | 5.74 | 155 | 1.02 |
+| SAC | 9297.15 | 78 | 1.02 |
 
 ## Sample Efficiency Chart
 
