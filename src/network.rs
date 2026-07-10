@@ -140,7 +140,38 @@ impl NeuralNetwork {
             self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
         }
     }
-    
+
+    /// Train using policy gradient method.
+    ///
+    /// Unlike train_minibatch which computes MSE loss gradients, this method takes
+    /// the output gradient directly (e.g., advantage-weighted log-probability gradient)
+    /// and backpropagates it through the network.
+    ///
+    /// # Arguments
+    /// * `inputs` - Batch of input states
+    /// * `output_gradients` - The gradient with respect to the network outputs
+    ///   (e.g., for policy gradient: advantage * ∇log π(a|s))
+    /// * `learning_rate` - Learning rate for the optimizer
+    pub fn train_policy_gradient(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        output_gradients: ArrayView2<f32>,
+        learning_rate: f32,
+    ) {
+        // Forward pass to cache activations
+        let _ = self.forward_batch(inputs);
+
+        // Backward pass using the provided gradients directly
+        // (instead of computing output - target like in train_minibatch)
+        let gradients = self.backward_batch(output_gradients);
+
+        // Apply gradients using optimizer
+        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
+            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
+            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
+        }
+    }
+
     /// Save the neural network's state to a file.
     /// This function serializes the neural network, including its layers and optimizer, and writes
     /// the serialized data to a file at the specified path.

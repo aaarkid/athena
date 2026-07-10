@@ -181,6 +181,18 @@ impl Adam {
 
 impl Optimizer for Adam {
     fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
+        // Lazy initialization: if momentum vectors don't exist for this layer, create them
+        while self.m_weights.len() <= layer_idx {
+            self.m_weights.push(Array2::<f32>::zeros((1, 1)));
+            self.v_weights.push(Array2::<f32>::zeros((1, 1)));
+            self.layer_count = self.m_weights.len();
+        }
+
+        // Resize if shape doesn't match
+        if self.m_weights[layer_idx].dim() != gradients.dim() {
+            self.m_weights[layer_idx] = Array2::<f32>::zeros(gradients.dim());
+            self.v_weights[layer_idx] = Array2::<f32>::zeros(gradients.dim());
+        }
 
         let m = &mut self.m_weights[layer_idx];
         let v = &mut self.v_weights[layer_idx];
@@ -202,6 +214,18 @@ impl Optimizer for Adam {
     }
 
     fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+        // Lazy initialization: if momentum vectors don't exist for this layer, create them
+        while self.m_biases.len() <= layer_idx {
+            self.m_biases.push(Array1::<f32>::zeros(1));
+            self.v_biases.push(Array1::<f32>::zeros(1));
+        }
+
+        // Resize if shape doesn't match
+        if self.m_biases[layer_idx].len() != gradients.len() {
+            self.m_biases[layer_idx] = Array1::<f32>::zeros(gradients.len());
+            self.v_biases[layer_idx] = Array1::<f32>::zeros(gradients.len());
+        }
+
         let m = &mut self.m_biases[layer_idx];
         let v = &mut self.v_biases[layer_idx];
 
@@ -258,22 +282,37 @@ impl RMSProp {
 
 impl Optimizer for RMSProp {
     fn update_weights(&mut self, layer_idx: usize, weights: &mut Array2<f32>, gradients: &Array2<f32>, learning_rate: f32) {
-        
+        // Lazy initialization
+        while self.v_weights.len() <= layer_idx {
+            self.v_weights.push(Array2::<f32>::zeros((1, 1)));
+        }
+        if self.v_weights[layer_idx].dim() != gradients.dim() {
+            self.v_weights[layer_idx] = Array2::<f32>::zeros(gradients.dim());
+        }
+
         let v = &mut self.v_weights[layer_idx];
-        
+
         // Update moving average of squared gradients
         v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
-        
+
         // Update weights
         *weights -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
     }
-    
+
     fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
+        // Lazy initialization
+        while self.v_biases.len() <= layer_idx {
+            self.v_biases.push(Array1::<f32>::zeros(1));
+        }
+        if self.v_biases[layer_idx].len() != gradients.len() {
+            self.v_biases[layer_idx] = Array1::<f32>::zeros(gradients.len());
+        }
+
         let v = &mut self.v_biases[layer_idx];
-        
+
         // Update moving average of squared gradients
         v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
-        
+
         // Update biases
         *biases -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
     }

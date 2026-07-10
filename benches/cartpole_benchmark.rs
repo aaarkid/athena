@@ -138,7 +138,7 @@ fn benchmark_dqn(episodes: usize) -> BenchmarkResult {
             
             if replay_buffer.len() >= 32 {
                 let batch = replay_buffer.sample(32);
-                let _ = agent.train_on_batch(&batch, 0.99, 0.001);
+                let _ = agent.train_on_batch(&batch, 0.99, 0.0001);
             }
             
             state = next_state;
