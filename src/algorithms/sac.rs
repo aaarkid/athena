@@ -173,21 +173,31 @@ impl SACAgent {
         let mut log_prob = 0.0;
 
         for i in 0..action_size {
-            // Inverse tanh to get original sample (with clamping for numerical stability)
-            let clamped_action = action[i].clamp(-0.999, 0.999);
-            let atanh_action = 0.5 * ((1.0 + clamped_action) / (1.0 - clamped_action)).ln();
+            // Inverse tanh to get original sample (with strict clamping for numerical stability)
+            let clamped_action = action[i].clamp(-0.9999, 0.9999);
+            let ratio = (1.0 + clamped_action) / (1.0 - clamped_action);
+            let atanh_action = if ratio > 0.0 { 0.5 * ratio.ln() } else { 0.0 };
 
-            // Gaussian log probability
-            let normal_log_prob = -0.5 * ((atanh_action - mean[i]) / std[i]).powi(2)
-                - log_std[i] - 0.5 * (2.0 * std::f32::consts::PI).ln();
+            // Check for NaN and use fallback
+            if !atanh_action.is_finite() || !mean[i].is_finite() || !std[i].is_finite() {
+                continue; // Skip this dimension if numerical issues
+            }
+
+            // Gaussian log probability with clamped std to avoid division by zero
+            let std_clamped = std[i].max(1e-6);
+            let z = (atanh_action - mean[i]) / std_clamped;
+            let normal_log_prob = -0.5 * z.powi(2).min(100.0) // Clamp squared term
+                - log_std[i].max(-20.0) - 0.5 * (2.0 * std::f32::consts::PI).ln();
 
             // Jacobian correction for tanh squashing
-            let tanh_correction = (1.0 - action[i].powi(2) + 1e-6).ln();
+            let action_sq = action[i].powi(2).min(0.9999);
+            let tanh_correction = (1.0 - action_sq + 1e-6).ln();
 
             log_prob += normal_log_prob - tanh_correction;
         }
 
-        Ok(log_prob)
+        // Clamp final result for stability
+        Ok(log_prob.clamp(-100.0, 100.0))
     }
 
     /// Get Q-value for a state-action pair
@@ -318,17 +328,27 @@ impl SACAgent {
             let adv_scale = advantage.clamp(-10.0, 10.0) / 10.0;
 
             for j in 0..self.action_size {
-                // Inverse tanh to get pre-squashed action
-                let clamped_action = action[j].clamp(-0.999, 0.999);
-                let atanh_action = 0.5 * ((1.0 + clamped_action) / (1.0 - clamped_action)).ln();
+                // Inverse tanh to get pre-squashed action (with numerical stability)
+                let clamped_action = action[j].clamp(-0.9999, 0.9999);
+                let ratio = (1.0 + clamped_action) / (1.0 - clamped_action);
+                let atanh_action = if ratio > 0.0 { 0.5 * ratio.ln() } else { 0.0 };
 
-                // Move mean toward action if advantage is positive
-                let target_mean = mean[j] + adv_scale * (atanh_action - mean[j]) * 0.1;
+                // Check for NaN and use current mean as fallback
+                let target_mean = if atanh_action.is_finite() && mean[j].is_finite() {
+                    // Move mean toward action if advantage is positive
+                    (mean[j] + adv_scale * (atanh_action - mean[j]) * 0.1).clamp(-5.0, 5.0)
+                } else {
+                    mean[j].clamp(-5.0, 5.0)
+                };
                 actor_targets[[i, j]] = target_mean;
 
                 // Keep log_std, but encourage exploration when advantage is negative
-                let target_log_std = log_std[j] + if adv_scale < 0.0 { 0.01 } else { -0.01 };
-                actor_targets[[i, self.action_size + j]] = target_log_std.clamp(-20.0, 2.0);
+                let target_log_std = if log_std[j].is_finite() {
+                    (log_std[j] + if adv_scale < 0.0 { 0.01 } else { -0.01 }).clamp(-20.0, 2.0)
+                } else {
+                    0.0
+                };
+                actor_targets[[i, self.action_size + j]] = target_log_std;
             }
         }
 
