@@ -102,6 +102,9 @@ impl DqnAgent {
         if layer_sizes.len() < 2 {
             panic!("Network must have at least input and output layers");
         }
+        if target_update_freq == 0 {
+            panic!("target_update_freq must be at least 1; the update counter is taken modulo it");
+        }
         
         // Create activations (ReLU for hidden layers, Linear for output)
         let mut activations = vec![Activation::Relu; layer_sizes.len() - 2];
@@ -151,8 +154,10 @@ impl DqnAgent {
             // Exploration: random action
             Ok(self.rng.gen_range(0..num_actions))
         } else {
-            // Exploitation: best action from Q-network
-            let q_values = self.q_network.forward(state);
+            // Exploitation: best action from Q-network. try_forward reports a wrong state
+            // width as an error; forward would panic inside ndarray, which for a game
+            // means the process dies mid-frame.
+            let q_values = self.q_network.try_forward(state)?;
             q_values
                 .iter()
                 .enumerate()
@@ -186,10 +191,25 @@ impl DqnAgent {
         }
         
         let batch_size = experiences.len();
-        let state_size = experiences[0].state.len();
-        let _num_actions = self.q_network.layers.last()
-            .ok_or_else(|| AthenaError::TrainingError("No layers in network".to_string()))?
-            .biases.len();
+        let state_size = self.q_network.input_size();
+        let num_actions = self.q_network.output_size();
+
+        // Everything below indexes by action and assigns whole rows, so a mismatched
+        // experience would panic. Report it instead.
+        for (i, exp) in experiences.iter().enumerate() {
+            if exp.state.len() != state_size || exp.next_state.len() != state_size {
+                return Err(AthenaError::dimension_mismatch(
+                    format!("experience {} state width {}", i, state_size),
+                    format!("state {} and next_state {}", exp.state.len(), exp.next_state.len()),
+                ));
+            }
+            if exp.action >= num_actions {
+                return Err(AthenaError::InvalidAction {
+                    action: exp.action,
+                    max_actions: num_actions,
+                });
+            }
+        }
         
         // Stack experiences into batches
         let mut states = Array2::zeros((batch_size, state_size));
@@ -393,5 +413,69 @@ impl DqnAgentBuilder {
 impl Default for DqnAgentBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::optimizer::SGD;
+    use ndarray::array;
+
+    fn agent() -> DqnAgent {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 100, false)
+    }
+
+    fn experience(state_len: usize, action: usize) -> Experience {
+        Experience {
+            state: ndarray::Array1::zeros(state_len),
+            action,
+            reward: 1.0,
+            next_state: ndarray::Array1::zeros(state_len),
+            done: false,
+        }
+    }
+
+    #[test]
+    fn a_state_of_the_wrong_width_is_an_error_not_a_panic() {
+        let mut agent = agent();
+
+        assert!(agent.act(array![1.0, 2.0, 3.0, 4.0].view()).is_ok());
+        assert!(agent.act(array![1.0, 2.0, 3.0].view()).is_err());
+        assert!(agent.act(array![1.0, 2.0, 3.0, 4.0, 5.0].view()).is_err());
+    }
+
+    #[test]
+    fn training_rejects_experiences_that_do_not_fit_the_network() {
+        let mut agent = agent();
+
+        let good = experience(4, 0);
+        assert!(agent.train_on_batch(&[&good], 0.99, 0.01).is_ok());
+
+        // A state one element too wide would panic on row assignment
+        let wide = experience(5, 0);
+        assert!(agent.train_on_batch(&[&wide], 0.99, 0.01).is_err());
+
+        // An action at or past the output width would panic on indexing
+        let bad_action = experience(4, 3);
+        assert!(agent.train_on_batch(&[&bad_action], 0.99, 0.01).is_err());
+
+        // A mixed batch is rejected on the offending element, not the first
+        let mixed = vec![&good, &wide];
+        assert!(agent.train_on_batch(&mixed, 0.99, 0.01).is_err());
+    }
+
+    #[test]
+    fn an_empty_batch_is_an_error() {
+        let mut agent = agent();
+        assert!(agent.train_on_batch(&[], 0.99, 0.01).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "target_update_freq must be at least 1")]
+    fn a_zero_target_update_frequency_is_rejected_at_construction() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 0, false);
     }
 }

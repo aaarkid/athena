@@ -94,6 +94,10 @@ impl TD3Agent {
         action_low: f32,
         action_high: f32,
     ) -> Self {
+        if policy_delay == 0 {
+            panic!("policy_delay must be at least 1; the update counter is taken modulo it");
+        }
+
         // Build actor network
         let mut actor_sizes = vec![state_size];
         actor_sizes.extend_from_slice(hidden_sizes);
