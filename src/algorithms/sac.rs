@@ -13,6 +13,20 @@ use crate::error::{AthenaError, Result};
 /// the samples leave the useful range of tanh.
 const LOG_STD_MIN: f32 = -20.0;
 const LOG_STD_MAX: f32 = 2.0;
+/// One sample from the policy, with everything the reparameterized gradient needs
+struct PolicySample {
+    /// The squashed action, tanh(pre_tanh)
+    action: Array1<f32>,
+    /// log pi(action | state), tanh correction included
+    log_prob: f32,
+    /// The pre-squash sample, mean + std * noise. Only the tests read this, to check
+    /// that action == tanh(pre_tanh), the invariant the gradient chain rests on.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pre_tanh: Array1<f32>,
+    /// The standard normal draw that produced it
+    noise: Array1<f32>,
+}
+
 /// Keeps the tanh Jacobian correction finite when an action saturates at +/-1
 const TANH_EPS: f32 = 1e-6;
 /// Per-element ceiling on the policy gradient, to survive early training
@@ -170,16 +184,12 @@ impl SACAgent {
         }
     }
 
-    /// Sample an action and return its log probability from the same forward pass.
+    /// Sample an action and its log probability from a single forward pass.
     ///
-    /// Returns the squashed action, its log probability, the pre-tanh sample and the
-    /// noise that produced it. The last two are what the reparameterized policy
-    /// gradient needs; `log_prob` alone has to invert the tanh and loses precision
-    /// near the limits.
-    fn sample_with_log_prob(
-        &mut self,
-        state: ArrayView1<f32>,
-    ) -> Result<(Array1<f32>, f32, Array1<f32>, Array1<f32>)> {
+    /// Deriving the log probability afterwards would mean inverting the tanh, which
+    /// loses precision near +/-1. Keeping the noise lets the policy gradient treat
+    /// the action as differentiable in the actor's own outputs.
+    fn sample_with_log_prob(&mut self, state: ArrayView1<f32>) -> Result<PolicySample> {
         let output = self.actor.forward(state);
         let action_size = output.len() / 2;
 
@@ -211,47 +221,7 @@ impl SACAgent {
             log_prob += gaussian - squash_correction;
         }
 
-        Ok((action, log_prob, pre_tanh, noise))
-    }
-
-    /// Compute log probability of action under current policy
-    fn log_prob(&mut self, state: ArrayView1<f32>, action: ArrayView1<f32>) -> Result<f32> {
-        let output = self.actor.forward(state);
-        let action_size = output.len() / 2;
-
-        let mean = output.slice(ndarray::s![..action_size]).to_owned();
-        let log_std = output.slice(ndarray::s![action_size..]).to_owned();
-        let std = log_std.mapv(|x| x.clamp(-20.0, 2.0).exp());
-
-        // Compute log probability with tanh correction
-        let mut log_prob = 0.0;
-
-        for i in 0..action_size {
-            // Inverse tanh to get original sample (with strict clamping for numerical stability)
-            let clamped_action = action[i].clamp(-0.9999, 0.9999);
-            let ratio = (1.0 + clamped_action) / (1.0 - clamped_action);
-            let atanh_action = if ratio > 0.0 { 0.5 * ratio.ln() } else { 0.0 };
-
-            // Check for NaN and use fallback
-            if !atanh_action.is_finite() || !mean[i].is_finite() || !std[i].is_finite() {
-                continue; // Skip this dimension if numerical issues
-            }
-
-            // Gaussian log probability with clamped std to avoid division by zero
-            let std_clamped = std[i].max(1e-6);
-            let z = (atanh_action - mean[i]) / std_clamped;
-            let normal_log_prob = -0.5 * z.powi(2).min(100.0) // Clamp squared term
-                - log_std[i].max(-20.0) - 0.5 * (2.0 * std::f32::consts::PI).ln();
-
-            // Jacobian correction for tanh squashing
-            let action_sq = action[i].powi(2).min(0.9999);
-            let tanh_correction = (1.0 - action_sq + 1e-6).ln();
-
-            log_prob += normal_log_prob - tanh_correction;
-        }
-
-        // Clamp final result for stability
-        Ok(log_prob.clamp(-100.0, 100.0))
+        Ok(PolicySample { action, log_prob, pre_tanh, noise })
     }
 
     /// Get Q-value for a state-action pair
@@ -295,7 +265,9 @@ impl SACAgent {
             let next_state = next_states.row(i);
 
             // Sample next action from the current policy, log probability included
-            let (next_action, next_log_prob, _, _) = self.sample_with_log_prob(next_state)?;
+            let next = self.sample_with_log_prob(next_state)?;
+            let next_action = next.action;
+            let next_log_prob = next.log_prob;
 
             // Compute target Q-value using target networks
             let sa_concat_next = concatenate(next_state, next_action.view());
@@ -352,10 +324,10 @@ impl SACAgent {
         let mut log_probs = vec![0.0f32; batch_size];
 
         for i in 0..batch_size {
-            let (action, log_prob, _, noise) = self.sample_with_log_prob(states.row(i))?;
-            sampled_actions.row_mut(i).assign(&action);
-            noises.row_mut(i).assign(&noise);
-            log_probs[i] = log_prob;
+            let sample = self.sample_with_log_prob(states.row(i))?;
+            sampled_actions.row_mut(i).assign(&sample.action);
+            noises.row_mut(i).assign(&sample.noise);
+            log_probs[i] = sample.log_prob;
         }
 
         // dQ/da, taken from whichever critic gives the smaller value for that sample.
@@ -771,17 +743,16 @@ mod tests {
         let state = Array1::from_vec(vec![0.1, 0.2, 0.3]);
 
         for _ in 0..20 {
-            let (action, log_prob, pre_tanh, noise) =
-                agent.sample_with_log_prob(state.view()).unwrap();
+            let s = agent.sample_with_log_prob(state.view()).unwrap();
 
-            assert_eq!(action.len(), 2);
-            assert!(log_prob.is_finite(), "log_prob was {log_prob}");
-            assert!(action.iter().all(|a| a.abs() <= 1.0), "tanh output out of range");
+            assert_eq!(s.action.len(), 2);
+            assert!(s.log_prob.is_finite(), "log_prob was {}", s.log_prob);
+            assert!(s.action.iter().all(|a| a.abs() <= 1.0), "tanh output out of range");
             // a = tanh(u) must hold for the gradient chain to be valid
             for j in 0..2 {
-                assert!((action[j] - pre_tanh[j].tanh()).abs() < 1e-5);
+                assert!((s.action[j] - s.pre_tanh[j].tanh()).abs() < 1e-5);
             }
-            assert!(noise.iter().all(|e| e.is_finite()));
+            assert!(s.noise.iter().all(|e| e.is_finite()));
         }
     }
 }
