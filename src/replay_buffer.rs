@@ -172,6 +172,16 @@ impl PrioritizedReplayBuffer {
         }
     }
     
+    /// Set the constant added to priorities so none of them reach zero
+    pub fn set_epsilon(&mut self, epsilon: f32) {
+        self.epsilon = epsilon;
+    }
+
+    /// The constant added to priorities
+    pub fn epsilon(&self) -> f32 {
+        self.epsilon
+    }
+
     /// Add an experience with default priority
     pub fn add(&mut self, experience: Experience) {
         self.add_with_priority(experience, self.max_priority);

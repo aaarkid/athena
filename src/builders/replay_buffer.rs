@@ -110,9 +110,9 @@ impl PrioritizedReplayBufferBuilder {
             });
         }
         
-        // For now, we'll accept the default epsilon value
-        // In the future, we could add a setter method to PrioritizedReplayBuffer
-        Ok(PrioritizedReplayBuffer::new(capacity, self.priority_method))
+        let mut buffer = PrioritizedReplayBuffer::new(capacity, self.priority_method);
+        buffer.set_epsilon(self.epsilon);
+        Ok(buffer)
     }
 }
 
