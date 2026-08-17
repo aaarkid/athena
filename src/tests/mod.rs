@@ -2,6 +2,7 @@
 pub mod test_activations;
 pub mod test_agent;
 pub mod test_edge_cases;
+pub mod test_export;
 pub mod test_inference;
 #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 pub mod test_gpu_mock;

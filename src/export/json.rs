@@ -2,9 +2,13 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use ndarray::{Array1, Array2};
+
 use crate::network::NeuralNetwork;
 use crate::activations::Activation;
 use crate::error::{AthenaError, Result};
+use crate::layers::Layer;
+use crate::optimizer::OptimizerWrapper;
 
 /// Writes a network's structure and weights to disk.
 ///
@@ -79,7 +83,7 @@ impl NetworkExporter {
         }
         
         let network_json = json!({
-            "format": "athena_onnx_export",
+            "format": "athena_network",
             "version": "1.0",
             "model": {
                 "name": "athena_network",
@@ -110,11 +114,13 @@ fn activation_op_name(activation: &Activation) -> &'static str {
     }
 }
 
-/// Import functionality for ONNX models
+/// Reads back what `NetworkExporter` wrote.
 pub struct NetworkImporter;
 
 impl NetworkImporter {
-    /// Import a network from JSON format
+    /// Read the shape of a network: layer sizes and activations, no weights.
+    ///
+    /// Use `import_network_json` to get a network that can actually run.
     pub fn import_json(path: &Path) -> Result<NetworkStructure> {
         use serde_json::Value;
         
@@ -128,7 +134,9 @@ impl NetworkImporter {
                 reason: "Missing format field".to_string(),
             })?;
         
-        if format != "athena_onnx_export" {
+        // athena_onnx_export was the tag before 0.4.0. It never wrote anything ONNX,
+        // so the name changed; files carrying it still read.
+        if format != "athena_network" && format != "athena_onnx_export" {
             return Err(AthenaError::InvalidParameter {
                 name: "format".to_string(),
                 reason: format!("Unknown format: {}", format),
@@ -172,6 +180,150 @@ impl NetworkImporter {
         }
         
         Ok(NetworkStructure { layers: layer_specs })
+    }
+
+    /// Rebuild a runnable network from an exported JSON file.
+    ///
+    /// `import_json` reads the shape only. This one reads the weight and bias arrays as
+    /// well, checks each against the declared sizes and that consecutive layers chain,
+    /// and returns a network that produces the same numbers as the one exported.
+    ///
+    /// The optimizer is not part of the file: pass the one the network should train
+    /// with, or a stateless `SGD` if it is only going to run inference.
+    pub fn import_network_json(path: &Path, optimizer: OptimizerWrapper) -> Result<NeuralNetwork> {
+        use serde_json::Value;
+
+        let file = File::open(path)?;
+        let json: Value = serde_json::from_reader(file)?;
+
+        let format = json["format"].as_str().ok_or_else(|| AthenaError::InvalidParameter {
+            name: "format".to_string(),
+            reason: "Missing format field".to_string(),
+        })?;
+        if format != "athena_network" && format != "athena_onnx_export" {
+            return Err(AthenaError::InvalidParameter {
+                name: "format".to_string(),
+                reason: format!("Unknown format: {}", format),
+            });
+        }
+
+        let layers_json = json["model"]["layers"].as_array().ok_or_else(|| {
+            AthenaError::InvalidParameter {
+                name: "layers".to_string(),
+                reason: "Missing layers array".to_string(),
+            }
+        })?;
+
+        if layers_json.is_empty() {
+            return Err(AthenaError::InvalidParameter {
+                name: "layers".to_string(),
+                reason: "The file declares no layers".to_string(),
+            });
+        }
+
+        let mut layers = Vec::with_capacity(layers_json.len());
+        let mut previous_output: Option<usize> = None;
+
+        for (i, layer_json) in layers_json.iter().enumerate() {
+            let field = |name: &str| -> Result<usize> {
+                layer_json[name]
+                    .as_u64()
+                    .map(|v| v as usize)
+                    .ok_or_else(|| AthenaError::InvalidParameter {
+                        name: name.to_string(),
+                        reason: format!("Missing or invalid {} on layer {}", name, i),
+                    })
+            };
+
+            let input_size = field("input_size")?;
+            let output_size = field("output_size")?;
+
+            if let Some(previous) = previous_output {
+                if input_size != previous {
+                    return Err(AthenaError::dimension_mismatch(
+                        format!("layer {} taking {} inputs", i, previous),
+                        format!("{} inputs", input_size),
+                    ));
+                }
+            }
+
+            let activation_str =
+                layer_json["activation"]
+                    .as_str()
+                    .ok_or_else(|| AthenaError::InvalidParameter {
+                        name: "activation".to_string(),
+                        reason: format!("Missing activation on layer {}", i),
+                    })?;
+            let activation = onnx_to_activation(activation_str)?;
+
+            let rows = layer_json["weights"].as_array().ok_or_else(|| {
+                AthenaError::InvalidParameter {
+                    name: "weights".to_string(),
+                    reason: format!("Layer {} carries no weights", i),
+                }
+            })?;
+
+            if rows.len() != input_size {
+                return Err(AthenaError::dimension_mismatch(
+                    format!("layer {} with {} weight rows", i, input_size),
+                    format!("{} rows", rows.len()),
+                ));
+            }
+
+            let mut weights = Array2::zeros((input_size, output_size));
+            for (r, row) in rows.iter().enumerate() {
+                let values = row.as_array().ok_or_else(|| AthenaError::InvalidParameter {
+                    name: "weights".to_string(),
+                    reason: format!("Layer {} row {} is not an array", i, r),
+                })?;
+                if values.len() != output_size {
+                    return Err(AthenaError::dimension_mismatch(
+                        format!("layer {} row {} of length {}", i, r, output_size),
+                        format!("length {}", values.len()),
+                    ));
+                }
+                for (c, value) in values.iter().enumerate() {
+                    weights[[r, c]] =
+                        value.as_f64().ok_or_else(|| AthenaError::InvalidParameter {
+                            name: "weights".to_string(),
+                            reason: format!("Layer {} weight [{}, {}] is not a number", i, r, c),
+                        })? as f32;
+                }
+            }
+
+            let bias_values =
+                layer_json["biases"]
+                    .as_array()
+                    .ok_or_else(|| AthenaError::InvalidParameter {
+                        name: "biases".to_string(),
+                        reason: format!("Layer {} carries no biases", i),
+                    })?;
+            if bias_values.len() != output_size {
+                return Err(AthenaError::dimension_mismatch(
+                    format!("layer {} with {} biases", i, output_size),
+                    format!("{} biases", bias_values.len()),
+                ));
+            }
+
+            let mut biases = Array1::zeros(output_size);
+            for (c, value) in bias_values.iter().enumerate() {
+                biases[c] = value.as_f64().ok_or_else(|| AthenaError::InvalidParameter {
+                    name: "biases".to_string(),
+                    reason: format!("Layer {} bias {} is not a number", i, c),
+                })? as f32;
+            }
+
+            layers.push(
+                Layer::new(input_size, output_size, activation)
+                    .with_weights(weights)
+                    .with_biases(biases),
+            );
+            previous_output = Some(output_size);
+        }
+
+        let network = NeuralNetwork { layers, optimizer };
+        network.validate()?;
+        Ok(network)
     }
 }
 

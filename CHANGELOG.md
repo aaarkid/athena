@@ -29,6 +29,11 @@ Breaking changes to the API and to the on-disk format.
 - **`DqnAgent::train_on_batch` reports a different loss.** It is now the mean squared TD
   error over the batch, measured before the update. It used to be measured after the
   update and divided by the number of actions, so it read `num_actions` times too small.
+- **The JSON export's format tag is `athena_network`**, not `athena_onnx_export`. It
+  never wrote anything ONNX. Files carrying the old tag still read.
+- **`MockGpuBackend` no longer inserts an artificial delay by default**, and its
+  `device_info` no longer claims to be an Intel Arc. Every operation always ran on the
+  CPU; the output now says so.
 - **The loss functions report a mean over samples and features.** `MSE::gradient_batch`
   was divided by the batch size while `compute_batch` was divided by `2 * batch *
   features`, so the gradient was not the derivative of the value.
@@ -55,6 +60,14 @@ Breaking changes to the API and to the on-disk format.
   file format.
 - `LayerTrait::forward_batch_into` and `forward_into`, cache-free forward passes with
   defaults for every implementation.
+- `NeuralNetwork::try_new` and `DqnAgent::try_new`, reporting a bad shape instead of
+  panicking. `new` stays as a documented panicking wrapper around each.
+- `DqnAgent::decay_epsilon(decay_rate, min_epsilon)`. The Python and wasm bindings
+  delegate to it.
+- `NetworkImporter::import_network_json(path, optimizer)`, which rebuilds a runnable
+  network from an exported file. `import_json` still reads the shape only.
+- `docs/quickstart.md`, `docs/conventions.md` and `examples/game_loop_dqn.rs`. The
+  README and the guides are compiled as doctests, so their samples cannot drift.
 
 ### Fixed
 
@@ -86,8 +99,12 @@ Measured single-threaded in release on one machine; treat the ratios, not the ab
 - Adam's overhead over SGD on 86,544 parameters at batch 32: 921 us to 413 us. RMSProp's:
   492 us to 197 us.
 - `LSTMLayer::forward_step` at 16 inputs and 64 units, batch 1: 11.3 us to 5.9 us.
+- `DqnAgent::train_on_batch` runs three forward passes where it ran five: 1352 us to
+  1257 us on `[64,256,256,16]` at batch 32. A2C, PPO and SAC lost a redundant pass each.
 - Target network updates are written in place, and target networks no longer carry a
   copy of the trained network's optimizer state.
+- The slowest doctest ran 100,000 DQN steps unoptimized and took 125 s. It now takes
+  2.5 s, and `tests/benchmark_test.rs` carries two non-ignored latency assertions.
 
 ## 0.3.0
 

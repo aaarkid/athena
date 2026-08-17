@@ -99,26 +99,48 @@ impl DqnAgent {
         target_update_freq: usize,
         use_double_dqn: bool,
     ) -> Self {
-        // Validate inputs
+        Self::try_new(layer_sizes, epsilon, optimizer, target_update_freq, use_double_dqn)
+            .unwrap_or_else(|e| panic!("DqnAgent::new: {}", e))
+    }
+
+    /// Build an agent, reporting a bad configuration instead of panicking.
+    ///
+    /// Hidden layers get ReLU and the output layer Linear, which is what a Q-function
+    /// needs: its outputs are returns, not probabilities.
+    pub fn try_new(
+        layer_sizes: &[usize],
+        epsilon: f32,
+        optimizer: OptimizerWrapper,
+        target_update_freq: usize,
+        use_double_dqn: bool,
+    ) -> Result<Self> {
         if layer_sizes.len() < 2 {
-            panic!("Network must have at least input and output layers");
+            return Err(AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!(
+                    "an agent needs at least a state width and an action count, got {} entries",
+                    layer_sizes.len()
+                ),
+            });
         }
         if target_update_freq == 0 {
-            panic!("target_update_freq must be at least 1; the update counter is taken modulo it");
+            return Err(AthenaError::InvalidParameter {
+                name: "target_update_freq".to_string(),
+                reason: "must be at least 1; the update counter is taken modulo it".to_string(),
+            });
         }
-        
+
         // Create activations (ReLU for hidden layers, Linear for output)
         let mut activations = vec![Activation::Relu; layer_sizes.len() - 2];
         activations.push(Activation::Linear);
-        
-        // Create main and target networks
-        let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
+
+        let q_network = NeuralNetwork::try_new(layer_sizes, &activations, optimizer)?;
         // The target network is only ever assigned to, so it holds no optimizer state
         let target_network = q_network.clone_as_target();
-        
+
         let rng = default_rng();
-        
-        DqnAgent {
+
+        Ok(DqnAgent {
             q_network,
             target_network,
             epsilon,
@@ -127,7 +149,7 @@ impl DqnAgent {
             use_double_dqn,
             train_steps: 0,
             rng,
-        }
+        })
     }
     
     /// Reseed this agent's generator so its randomness repeats.
@@ -638,10 +660,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "target_update_freq must be at least 1")]
+    #[should_panic(expected = "target_update_freq")]
     fn a_zero_target_update_frequency_is_rejected_at_construction() {
         let optimizer = OptimizerWrapper::SGD(SGD::new());
         DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 0, false);
+    }
+
+    #[test]
+    fn try_new_reports_a_bad_configuration_instead_of_panicking() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        assert!(DqnAgent::try_new(&[4, 16, 3], 0.0, optimizer.clone(), 0, false).is_err());
+        assert!(DqnAgent::try_new(&[], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4, 0, 3], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4, 16, 3], 0.0, optimizer, 10, false).is_ok());
     }
 
     #[test]

@@ -66,20 +66,57 @@ impl NeuralNetwork {
     /// Create a new neural network with the given layer sizes, activations, and optimizer.
     /// This function constructs a new neural network by creating layers with the specified sizes
     /// and activation functions. The optimizer is used for updating the weights and biases during training.
+    /// Panicking wrapper around `try_new`.
+    ///
+    /// Panics if `layer_sizes` has fewer than two entries, if `activations` does not have
+    /// exactly one fewer entry than `layer_sizes`, or if any size is zero. Use `try_new`
+    /// when the sizes come from a file, a config or anything else outside the program.
     pub fn new(layer_sizes: &[usize], activations: &[Activation], optimizer: OptimizerWrapper) -> Self {
-        assert_eq!(layer_sizes.len() - 1, activations.len());
-    
+        Self::try_new(layer_sizes, activations, optimizer)
+            .unwrap_or_else(|e| panic!("NeuralNetwork::new: {}", e))
+    }
+
+    /// Build a network, reporting a bad shape instead of panicking.
+    ///
+    /// `layer_sizes` needs at least an input and an output width, and `activations` one
+    /// entry per layer, which is one fewer than `layer_sizes`.
+    pub fn try_new(
+        layer_sizes: &[usize],
+        activations: &[Activation],
+        optimizer: OptimizerWrapper,
+    ) -> crate::error::Result<Self> {
+        // The subtraction below underflows on an empty slice, so check the length first
+        if layer_sizes.len() < 2 {
+            return Err(crate::error::AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!(
+                    "a network needs at least an input and an output width, got {} entries",
+                    layer_sizes.len()
+                ),
+            });
+        }
+
+        if activations.len() != layer_sizes.len() - 1 {
+            return Err(crate::error::AthenaError::dimension_mismatch(
+                format!("{} activations, one per layer", layer_sizes.len() - 1),
+                format!("{} activations", activations.len()),
+            ));
+        }
+
+        if let Some(position) = layer_sizes.iter().position(|&size| size == 0) {
+            return Err(crate::error::AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!("width {} is zero", position),
+            });
+        }
+
         let layers = layer_sizes
             .windows(2)
             .zip(activations.iter())
-            .map(|(window, &activation)| {
-                let input_size = window[0];
-                let output_size = window[1];
-                Layer::new(input_size, output_size, activation)
-            })
+            .map(|(window, &activation)| Layer::new(window[0], window[1], activation))
             .collect::<Vec<_>>();
-    
-        NeuralNetwork { layers, optimizer }
+
+        Ok(NeuralNetwork { layers, optimizer })
     }
     
     /// Create an empty neural network
