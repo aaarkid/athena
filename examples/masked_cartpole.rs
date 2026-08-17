@@ -10,7 +10,7 @@ use athena::agent::{DqnAgent, MaskedAgent};
 use athena::optimizer::{OptimizerWrapper, SGD};
 #[cfg(feature = "action-masking")]
 use athena::replay_buffer::{ReplayBuffer, Experience};
-use ndarray::{Array1, array};
+use ndarray::{Array1, ArrayView1, array};
 use rand::Rng;
 
 /// Simple CartPole environment with action masking
@@ -85,15 +85,21 @@ impl MaskedCartPole {
     /// Get action mask based on cart position
     /// Prevent moving further when near boundaries
     fn get_action_mask(&self) -> Array1<bool> {
-        let cart_pos = self.state[0];
-        let cart_vel = self.state[1];
-        
+        Self::mask_for(self.state.view(), self.boundary)
+    }
+
+    /// The mask is a function of the state alone, so training can recover the
+    /// next-state mask from a stored experience without keeping it in the buffer
+    fn mask_for(state: ArrayView1<f32>, boundary: f32) -> Array1<bool> {
+        let cart_pos = state[0];
+        let cart_vel = state[1];
+
         // Near left boundary and moving left: can't go left
-        let can_go_left = !(cart_pos < -self.boundary * 0.8 && cart_vel < 0.0);
-        
-        // Near right boundary and moving right: can't go right  
-        let can_go_right = !(cart_pos > self.boundary * 0.8 && cart_vel > 0.0);
-        
+        let can_go_left = !(cart_pos < -boundary * 0.8 && cart_vel < 0.0);
+
+        // Near right boundary and moving right: can't go right
+        let can_go_right = !(cart_pos > boundary * 0.8 && cart_vel > 0.0);
+
         array![can_go_left, can_go_right]
     }
 }
@@ -156,10 +162,16 @@ fn main() {
                 done,
             });
             
-            // Train agent
+            // Train agent. The bootstrap has to skip actions that are illegal in the
+            // next state, otherwise max_a' Q(s',a') ranges over moves the agent can
+            // never play and those entries drift upward unchecked.
             if buffer.len() >= batch_size && total_steps % update_frequency == 0 {
                 let batch = buffer.sample(batch_size);
-                let _ = agent.train_on_batch(&batch, 0.99, 0.001);
+                let next_masks: Vec<Array1<bool>> = batch
+                    .iter()
+                    .map(|e| MaskedCartPole::mask_for(e.next_state.view(), env.boundary))
+                    .collect();
+                let _ = agent.train_on_batch_masked(&batch, &next_masks, 0.99, 0.001);
             }
             
             // Update target network

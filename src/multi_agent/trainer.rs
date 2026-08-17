@@ -255,6 +255,11 @@ impl SelfPlayTrainer {
                 
                 // Convert to references for train_on_batch
                 let exp_refs: Vec<&Experience> = batch.iter().map(|e| &**e).collect();
+                // Actions are selected under the environment's legal-action mask, but
+                // the replay buffer stores plain Experiences with no mask, so the
+                // bootstrap here maximizes over illegal actions too. Use
+                // DqnAgent::train_on_batch_masked once the buffer carries the
+                // next-state mask.
                 let _ = agent.train_on_batch(&exp_refs, 0.99, 0.001);
                 
                 // Update target network periodically
