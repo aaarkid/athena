@@ -420,6 +420,68 @@ impl Conv1DLayer {
         output
     }
     
+    /// Backward pass for a batch of sequences.
+    ///
+    /// Returns the gradient with respect to the input, the kernels and the biases, in
+    /// that order, matching `Conv2DLayer::backward_batch`.
+    pub fn backward_batch(&mut self, output_gradient: ArrayView3<f32>) -> (Array3<f32>, Array3<f32>, Array1<f32>) {
+        let input = self.cached_input.as_ref()
+            .expect("Forward pass must be called before backward");
+        let pre_activation = self.cached_pre_activation.as_ref()
+            .expect("Forward pass must be called before backward");
+
+        // Through the activation first
+        let mut grad = output_gradient.to_owned();
+        for (mut grad_batch, pre_batch) in grad.axis_iter_mut(Axis(0)).zip(pre_activation.axis_iter(Axis(0))) {
+            for (mut grad_channel, pre_channel) in grad_batch.axis_iter_mut(Axis(0)).zip(pre_batch.axis_iter(Axis(0))) {
+                let deriv = self.activation.derivative(&pre_channel.to_owned());
+                grad_channel.zip_mut_with(&deriv, |g, d| *g *= d);
+            }
+        }
+
+        let (batch_size, _, in_length) = input.dim();
+        let out_length = grad.shape()[2];
+
+        let padded_input = if self.padding > 0 {
+            self.pad_input_1d(input)
+        } else {
+            input.clone()
+        };
+
+        let mut kernel_grads = Array3::zeros(self.kernels.dim());
+        let mut bias_grads = Array1::zeros(self.out_channels);
+        // Sized from the input the forward pass saw. Deriving it from the output would
+        // drop the tail positions whenever the stride does not divide the input evenly.
+        let mut grad_input_padded = Array3::zeros((batch_size, self.in_channels, in_length + 2 * self.padding));
+
+        for b in 0..batch_size {
+            for oc in 0..self.out_channels {
+                for ol in 0..out_length {
+                    let g = grad[[b, oc, ol]];
+                    bias_grads[oc] += g;
+
+                    let l_start = ol * self.stride;
+                    for ic in 0..self.in_channels {
+                        for k in 0..self.kernel_size {
+                            kernel_grads[[oc, ic, k]] += padded_input[[b, ic, l_start + k]] * g;
+                            grad_input_padded[[b, ic, l_start + k]] += self.kernels[[oc, ic, k]] * g;
+                        }
+                    }
+                }
+            }
+        }
+
+        let grad_input = if self.padding > 0 {
+            grad_input_padded
+                .slice(s![.., .., self.padding..self.padding + in_length])
+                .to_owned()
+        } else {
+            grad_input_padded
+        };
+
+        (grad_input, kernel_grads, bias_grads)
+    }
+
     /// Pad 1D input with zeros
     fn pad_input_1d(&self, input: &Array3<f32>) -> Array3<f32> {
         let (batch_size, channels, length) = input.dim();

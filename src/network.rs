@@ -146,15 +146,25 @@ impl NeuralNetwork {
     /// Compute gradients for the neural network's weights and biases for a batch of input vectors.
     /// This function calculates the gradients of the weights and biases for each input vector in the batch
     /// with respect to the target outputs using backpropagation.
+    /// Parameter gradients for a batch, averaged over the batch.
+    ///
+    /// The per-layer `backward_batch` sums over the batch, so this divides by the batch
+    /// size. Without that the effective learning rate scales with batch size: the same
+    /// learning rate that is stable at batch 32 takes steps 32 times larger at batch
+    /// 1024. Every framework averages here, so a learning rate carried over from one
+    /// behaves as expected.
     pub fn backward_batch(&mut self, output_errors: ArrayView2<f32>) -> Vec<(Array2<f32>, Array1<f32>)> {
         let mut gradients: Vec<(Array2<f32>, Array1<f32>)> = Vec::new();
         let mut current_error = output_errors.to_owned();
-    
+
+        let batch_size = output_errors.shape()[0].max(1) as f32;
+        let scale = 1.0 / batch_size;
+
         let length = self.layers.len();
         for i in (0..length).rev() {
             let layer = &mut self.layers[i];
             let (adjusted_error, weight_gradients, bias_gradients) = layer.backward_batch(current_error.view());
-            gradients.push((weight_gradients, bias_gradients));
+            gradients.push((weight_gradients * scale, bias_gradients * scale));
         
             if i != 0 {
                 current_error = adjusted_error.dot(&layer.weights.t());
@@ -199,6 +209,76 @@ impl NeuralNetwork {
         // exactly the error that was asked for
         let targets = &outputs - &output_errors.to_owned();
         self.train_minibatch(inputs, targets.view(), learning_rate);
+    }
+
+    /// Scale a set of gradients so their combined L2 norm is at most `max_norm`.
+    ///
+    /// Applied across all layers at once, which is what "global gradient norm" means; a
+    /// per-layer clip would change the direction of the update, not just its length.
+    /// Returns the norm before clipping, which is worth logging when training diverges.
+    fn clip_gradient_norm(
+        gradients: &mut [(Array2<f32>, Array1<f32>)],
+        max_norm: f32,
+    ) -> f32 {
+        let squared: f32 = gradients
+            .iter()
+            .map(|(w, b)| w.iter().chain(b.iter()).map(|v| v * v).sum::<f32>())
+            .sum();
+        let norm = squared.sqrt();
+
+        if norm.is_finite() && norm > max_norm && max_norm > 0.0 {
+            let scale = max_norm / norm;
+            for (w, b) in gradients.iter_mut() {
+                *w *= scale;
+                *b *= scale;
+            }
+        }
+
+        norm
+    }
+
+    fn apply_gradients(&mut self, gradients: Vec<(Array2<f32>, Array1<f32>)>, learning_rate: f32) {
+        for (idx, (layer, (weight_gradients, bias_gradients))) in
+            self.layers.iter_mut().zip(gradients).enumerate()
+        {
+            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
+            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
+        }
+    }
+
+    /// `train_minibatch` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn train_minibatch_clipped(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        targets: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let outputs = self.forward_batch(inputs);
+        let output_errors = &outputs - &targets;
+        let mut gradients = self.backward_batch(output_errors.view());
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
+    }
+
+    /// `train_policy_gradient` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn train_policy_gradient_clipped(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        output_gradients: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let _ = self.forward_batch(inputs);
+        let mut gradients = self.backward_batch(output_gradients);
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
     }
 
     /// Train the neural network for a batch of input vectors and target outputs.

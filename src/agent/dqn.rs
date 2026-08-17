@@ -248,6 +248,31 @@ impl DqnAgent {
         self.train_on_batch_inner(experiences, Some(next_masks), gamma, learning_rate)
     }
 
+    /// Train on a batch where each sample carries an importance-sampling weight.
+    ///
+    /// Returns the absolute TD error per sample, which is what a
+    /// `PrioritizedReplayBuffer` wants back for `update_priorities`. Pass the weights
+    /// from `sample_with_weights`; a weight of 1.0 is the same as `train_on_batch`, and
+    /// 0.0 removes that sample from the update.
+    pub fn train_on_batch_weighted(
+        &mut self,
+        experiences: &[&Experience],
+        weights: &[f32],
+        gamma: f32,
+        learning_rate: f32,
+    ) -> Result<Vec<f32>> {
+        if weights.len() != experiences.len() {
+            return Err(AthenaError::dimension_mismatch(
+                format!("{} weights, one per experience", experiences.len()),
+                format!("{} weights", weights.len()),
+            ));
+        }
+
+        let (_, td_errors) =
+            self.train_on_batch_full(experiences, None, Some(weights), gamma, learning_rate)?;
+        Ok(td_errors)
+    }
+
     fn train_on_batch_inner(
         &mut self,
         experiences: &[&Experience],
@@ -255,6 +280,18 @@ impl DqnAgent {
         gamma: f32,
         learning_rate: f32,
     ) -> Result<f32> {
+        let (loss, _) = self.train_on_batch_full(experiences, next_masks, None, gamma, learning_rate)?;
+        Ok(loss)
+    }
+
+    fn train_on_batch_full(
+        &mut self,
+        experiences: &[&Experience],
+        next_masks: Option<&[Array1<bool>]>,
+        weights: Option<&[f32]>,
+        gamma: f32,
+        learning_rate: f32,
+    ) -> Result<(f32, Vec<f32>)> {
         if experiences.is_empty() {
             return Err(AthenaError::EmptyBuffer("No experiences to train on".to_string()));
         }
@@ -357,6 +394,25 @@ impl DqnAgent {
             }
         }
         
+        // The target differs from the prediction on the taken action only, so the TD
+        // error is that one entry's difference
+        let mut td_errors = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            let a = actions[i];
+            td_errors.push((target_q_values[[i, a]] - current_q_values[[i, a]]).abs());
+        }
+
+        // Importance-sampling weights scale each sample's contribution. Shrinking the
+        // target toward the prediction is the same as scaling that sample's error.
+        if let Some(weights) = weights {
+            for i in 0..batch_size {
+                let a = actions[i];
+                let current = current_q_values[[i, a]];
+                let td = target_q_values[[i, a]] - current;
+                target_q_values[[i, a]] = current + weights[i] * td;
+            }
+        }
+
         // Train the network
         self.q_network.train_minibatch(states.view(), target_q_values.view(), learning_rate);
         
@@ -374,7 +430,7 @@ impl DqnAgent {
             self.update_target_network();
         }
         
-        Ok(loss)
+        Ok((loss, td_errors))
     }
     
     /// Save the agent to disk
@@ -655,6 +711,80 @@ mod tests {
         let narrow = array![true, true];
         assert!(agent
             .train_on_batch_masked(&[&exp], std::slice::from_ref(&narrow), 0.99, 0.01)
+            .is_err());
+    }
+
+    #[test]
+    fn weighted_training_with_zero_weights_leaves_the_network_alone() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        let exp = Experience {
+            state: array![0.5, -0.5],
+            action: 1,
+            reward: 100.0,
+            next_state: array![0.1, 0.2],
+            done: true,
+        };
+
+        let before = agent.q_network.layers[0].weights.clone();
+        agent
+            .train_on_batch_weighted(&[&exp], &[0.0], 0.99, 0.1)
+            .unwrap();
+        let after = agent.q_network.layers[0].weights.clone();
+
+        for (a, b) in before.iter().zip(after.iter()) {
+            assert!((a - b).abs() < 1e-6, "a zero weight should produce no update");
+        }
+    }
+
+    #[test]
+    fn weighted_training_reports_the_td_error() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        // Terminal, so the target is exactly the reward and the TD error is
+        // reward - Q(s, a)
+        let exp = Experience {
+            state: array![0.5, -0.5],
+            action: 1,
+            reward: 50.0,
+            next_state: array![0.1, 0.2],
+            done: true,
+        };
+
+        let predicted = agent.q_network.forward(exp.state.view())[1];
+        let expected = (50.0 - predicted).abs();
+
+        let td = agent
+            .train_on_batch_weighted(&[&exp], &[1.0], 0.99, 0.0)
+            .unwrap();
+
+        assert_eq!(td.len(), 1);
+        assert!(
+            (td[0] - expected).abs() < 1e-3,
+            "reported TD error {} against expected {}",
+            td[0],
+            expected
+        );
+    }
+
+    #[test]
+    fn weighted_training_rejects_a_mismatched_weight_count() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        let exp = Experience {
+            state: array![0.0, 0.0],
+            action: 0,
+            reward: 1.0,
+            next_state: array![0.0, 0.0],
+            done: false,
+        };
+
+        assert!(agent.train_on_batch_weighted(&[&exp], &[], 0.99, 0.01).is_err());
+        assert!(agent
+            .train_on_batch_weighted(&[&exp], &[1.0, 1.0], 0.99, 0.01)
             .is_err());
     }
 }

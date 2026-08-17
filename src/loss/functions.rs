@@ -1,6 +1,11 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
 /// Trait defining the interface for loss functions
+/// A loss function and its gradient.
+///
+/// Every implementation reports the mean over both samples and features, so `compute`
+/// and `compute_batch` are on the same scale and `gradient` is the exact derivative of
+/// `compute`. `src/tests/test_loss.rs` checks that against finite differences.
 pub trait Loss: Send + Sync {
     /// Compute the loss for a single prediction and target
     fn compute(&self, prediction: ArrayView1<f32>, target: ArrayView1<f32>) -> f32;
@@ -34,7 +39,8 @@ impl Loss for MSE {
     }
     
     fn gradient_batch(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
-        (&predictions - &targets) / predictions.shape()[0] as f32
+        let elements = (predictions.shape()[0] * predictions.shape()[1]) as f32;
+        (&predictions - &targets) / elements
     }
 }
 
@@ -64,7 +70,7 @@ impl Loss for HuberLoss {
     
     fn compute_batch(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         let diff = &predictions - &targets;
-        let batch_size = predictions.shape()[0] as f32;
+        let elements = (predictions.shape()[0] * predictions.shape()[1]) as f32;
         diff.mapv(|x| {
             let abs_x = x.abs();
             if abs_x <= self.delta {
@@ -72,7 +78,7 @@ impl Loss for HuberLoss {
             } else {
                 self.delta * abs_x - 0.5 * self.delta * self.delta
             }
-        }).sum() / batch_size
+        }).sum() / elements
     }
     
     fn gradient(&self, prediction: ArrayView1<f32>, target: ArrayView1<f32>) -> Array1<f32> {
@@ -88,14 +94,14 @@ impl Loss for HuberLoss {
     
     fn gradient_batch(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
         let diff = &predictions - &targets;
-        let batch_size = predictions.shape()[0] as f32;
+        let elements = (predictions.shape()[0] * predictions.shape()[1]) as f32;
         diff.mapv(|x| {
             if x.abs() <= self.delta {
                 x
             } else {
                 self.delta * x.signum()
             }
-        }) / batch_size
+        }) / elements
     }
 }
 
@@ -113,7 +119,7 @@ impl Loss for CrossEntropyLoss {
     
     fn compute_batch(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> f32 {
         let epsilon = 1e-7;
-        let batch_size = predictions.shape()[0] as f32;
+        let elements = (predictions.shape()[0] * predictions.shape()[1]) as f32;
         
         let mut total_loss = 0.0;
         for (pred_row, target_row) in predictions.axis_iter(ndarray::Axis(0))
@@ -123,7 +129,7 @@ impl Loss for CrossEntropyLoss {
                 .map(|(&t, &p)| t * (p + epsilon).ln())
                 .sum::<f32>();
         }
-        total_loss / batch_size
+        total_loss / elements
     }
     
     fn gradient(&self, prediction: ArrayView1<f32>, target: ArrayView1<f32>) -> Array1<f32> {
@@ -135,10 +141,10 @@ impl Loss for CrossEntropyLoss {
     
     fn gradient_batch(&self, predictions: ArrayView2<f32>, targets: ArrayView2<f32>) -> Array2<f32> {
         let epsilon = 1e-7;
-        let batch_size = predictions.shape()[0] as f32;
+        let elements = (predictions.shape()[0] * predictions.shape()[1]) as f32;
         
         Array2::from_shape_fn(predictions.dim(), |(i, j)| {
-            -(targets[[i, j]] / (predictions[[i, j]] + epsilon)) / batch_size
+            -(targets[[i, j]] / (predictions[[i, j]] + epsilon)) / elements
         })
     }
 }

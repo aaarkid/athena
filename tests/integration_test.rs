@@ -73,12 +73,14 @@ fn test_end_to_end_training() {
             
             // Train if enough experiences
             if replay_buffer.len() >= 32 {
-                let (batch, _weights, indices) = replay_buffer.sample_with_weights(32, 0.4);
-                let _ = agent.train_on_batch(&batch, 0.99, 0.001).unwrap();
-                
-                // Update priorities based on TD error (simplified)
-                let new_priorities: Vec<f32> = batch.iter().map(|_| 1.0).collect();
-                replay_buffer.update_priorities(&indices, &new_priorities);
+                let (batch, weights, slots) = replay_buffer.sample_with_weights(32, 0.4);
+                // Weighted training returns the TD error per sample, which is what the
+                // priorities should become. Writing a constant back instead would make
+                // this uniform sampling with extra steps.
+                let td_errors = agent
+                    .train_on_batch_weighted(&batch, &weights, 0.99, 0.001)
+                    .unwrap();
+                replay_buffer.update_priorities(&slots, &td_errors);
             }
         }
         

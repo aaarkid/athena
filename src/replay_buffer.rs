@@ -20,8 +20,10 @@
 //! 
 //! - **PrioritizedReplayBuffer**: Importance sampling based on TD error
 //!   - Samples experiences with higher learning potential more frequently
-//!   - Uses sum-tree for O(log n) sampling
-//!   - Includes importance sampling weights for bias correction
+//!   - Sampling is a linear scan over the stored priorities, O(n) per draw, not a
+//!     sum tree. Fine for the buffer sizes a game uses; measure before going larger.
+//!   - Returns importance sampling weights for bias correction, which
+//!     `DqnAgent::train_on_batch_weighted` accepts
 //! 
 //! ## Usage Example
 //! 
@@ -100,29 +102,32 @@ impl ReplayBuffer {
     /// Sample a batch using a caller-supplied generator.
     ///
     /// Pass a seeded generator when a training run has to repeat.
+    ///
+    /// Costs O(batch_size), not O(capacity). Drawing the batch by shuffling every index
+    /// in the buffer made this the dominant cost of a training step: 933 us of a 998 us
+    /// DQN step at a 100k buffer, and growing linearly with capacity.
     pub fn sample_with<R: Rng + ?Sized>(&self, batch_size: usize, rng: &mut R) -> Vec<&Experience> {
+        let len = self.buffer.len();
         let (slice1, slice2) = self.buffer.as_slices();
-        let mut indices = (0..self.buffer.len()).collect::<Vec<usize>>();
-        indices.shuffle(rng);
-    
-        if batch_size > indices.len() {
-            // Not enough samples in the buffer yet, return all of them:
-            indices.into_iter().map(|i| {
-                if i < slice1.len() {
-                    &slice1[i]
-                } else {
-                    &slice2[i - slice1.len()]
-                }
-            }).collect::<Vec<_>>()
-        } else {
-            indices.into_iter().take(batch_size).map(|i| {
-                if i < slice1.len() {
-                    &slice1[i]
-                } else {
-                    &slice2[i - slice1.len()]
-                }
-            }).collect::<Vec<_>>()
+
+        let at = |i: usize| -> &Experience {
+            if i < slice1.len() {
+                &slice1[i]
+            } else {
+                &slice2[i - slice1.len()]
+            }
+        };
+
+        // Not enough samples in the buffer yet, return all of them
+        if batch_size >= len {
+            return (0..len).map(at).collect();
         }
+
+        // Without replacement, same as the shuffle it replaces
+        rand::seq::index::sample(rng, len, batch_size)
+            .into_iter()
+            .map(at)
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -163,6 +168,11 @@ pub struct PrioritizedReplayBuffer {
     epsilon: f32,
     /// Maximum priority seen
     max_priority: f32,
+    /// Slot id of the oldest experience still stored.
+    ///
+    /// Slot ids are stable across evictions, so a caller can sample, add more
+    /// experiences, and still update the priorities of what it sampled.
+    first_slot: usize,
 }
 
 impl PrioritizedReplayBuffer {
@@ -175,6 +185,7 @@ impl PrioritizedReplayBuffer {
             method,
             epsilon: 0.01,
             max_priority: 1.0,
+            first_slot: 0,
         }
     }
     
@@ -198,6 +209,8 @@ impl PrioritizedReplayBuffer {
         if self.buffer.len() >= self.capacity {
             self.buffer.pop_front();
             self.priorities.pop_front();
+            // Everything shifted down by one, so the slot id of position 0 goes up
+            self.first_slot += 1;
         }
         
         self.buffer.push_back(experience);
@@ -208,16 +221,37 @@ impl PrioritizedReplayBuffer {
         }
     }
     
-    /// Update priorities for sampled experiences
-    pub fn update_priorities(&mut self, indices: &[usize], priorities: &[f32]) {
-        for (&idx, &priority) in indices.iter().zip(priorities.iter()) {
-            if idx < self.priorities.len() {
-                self.priorities[idx] = priority;
+    /// Update priorities for sampled experiences.
+    ///
+    /// `slots` are the ids returned by `sample_with_weights`, not positions. They stay
+    /// valid across evictions: an add between sampling and updating shifts every
+    /// position, and a positional index would then write to the wrong experience.
+    /// Slots whose experience has since been evicted are skipped.
+    pub fn update_priorities(&mut self, slots: &[usize], priorities: &[f32]) {
+        for (&slot, &priority) in slots.iter().zip(priorities.iter()) {
+            if let Some(position) = self.position_of(slot) {
+                self.priorities[position] = priority;
                 if priority > self.max_priority {
                     self.max_priority = priority;
                 }
             }
         }
+    }
+
+    /// Position of a slot id in the current buffer, or None if it has been evicted.
+    fn position_of(&self, slot: usize) -> Option<usize> {
+        let position = slot.checked_sub(self.first_slot)?;
+        (position < self.priorities.len()).then_some(position)
+    }
+
+    /// Slot id of a position in the current buffer.
+    fn slot_of(&self, position: usize) -> usize {
+        self.first_slot + position
+    }
+
+    /// Id of the oldest experience still stored. Slot ids never repeat.
+    pub fn first_slot(&self) -> usize {
+        self.first_slot
     }
     
     /// Sample a batch of experiences with importance sampling weights
@@ -240,8 +274,9 @@ impl PrioritizedReplayBuffer {
                     .map(|&i| &self.buffer[i])
                     .collect();
                 let weights = vec![1.0; actual_batch_size];
+                let slots = indices.iter().map(|&i| self.slot_of(i)).collect();
                 
-                (experiences, weights, indices)
+                (experiences, weights, slots)
             }
             
             PriorityMethod::Proportional { alpha } => {
@@ -268,7 +303,7 @@ impl PrioritizedReplayBuffer {
                     for (i, &prob) in probabilities.iter().enumerate() {
                         cumsum += prob;
                         if r <= cumsum {
-                            indices.push(i);
+                            indices.push(self.slot_of(i));
                             experiences.push(&self.buffer[i]);
                             
                             // Importance sampling weight
@@ -325,7 +360,7 @@ impl PrioritizedReplayBuffer {
                         cumsum += prob;
                         if r <= cumsum {
                             let buffer_idx = indexed_priorities[rank].0;
-                            sampled_indices.push(buffer_idx);
+                            sampled_indices.push(self.slot_of(buffer_idx));
                             experiences.push(&self.buffer[buffer_idx]);
                             
                             // Importance sampling weight

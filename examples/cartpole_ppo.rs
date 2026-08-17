@@ -198,7 +198,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             hidden_dims: vec![64, 64],
-            learning_rate: 3e-4,
+            learning_rate: 3e-3,
             gamma: 0.99,
             gae_lambda: 0.95,
             clip_epsilon: 0.2,
@@ -219,7 +219,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::default();
     
     // Create PPO agent
-    let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
+    // Adam, not SGD. CartPole's discounted return reaches the tens, and a squared value
+    // error at that magnitude diverges under plain SGD.
+    let optimizer = OptimizerWrapper::Adam(athena::optimizer::Adam::new(&[], 0.9, 0.999, 1e-8));
     
     let mut agent = PPOBuilder::new(4, 2)  // state_size, action_size
         .hidden_sizes(config.hidden_dims.clone())
@@ -264,6 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rollout_rewards = Vec::new();
         let mut rollout_dones = Vec::new();
         let mut rollout_values = Vec::new();
+        let mut rollout_log_probs = Vec::new();
         
         // Reset environments
         let mut states: Vec<_> = envs.iter_mut()
@@ -283,11 +286,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Get actions and values from agent
             let mut actions = Vec::new();
             let mut values = Vec::new();
+            let mut log_probs = Vec::new();
             
             for state in &normalized_states {
-                let (action, _log_prob, value) = agent.act(state.view())?;
+                // The log prob has to be the one under the policy that chose the action.
+                // PPO's ratio is exp(new_log_prob - old_log_prob); a constant here makes
+                // the ratio meaningless and the clip a no-op.
+                let (action, log_prob, value) = agent.act(state.view())?;
                 actions.push(action);
                 values.push(value);
+                log_probs.push(log_prob);
             }
             
             // Step environments
@@ -323,6 +331,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_rewards.extend(rewards);
             rollout_dones.extend(dones);
             rollout_values.extend(values);
+            rollout_log_probs.extend(log_probs);
             
             states = next_states;
             total_steps += config.n_envs;
@@ -348,6 +357,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_dones.into_iter().map(|d| if d { 1.0 } else { 0.0 }).collect()
         );
         let values_array = Array1::from_vec(rollout_values);
+        let log_probs_array = Array1::from_vec(rollout_log_probs);
         let final_values_array = Array1::from_vec(final_values);
         
         // Update learning rate
@@ -362,7 +372,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_buffer.actions.push(actions_array[i]);
             rollout_buffer.rewards.push(rewards_array[i]);
             rollout_buffer.values.push(values_array[i]);
-            rollout_buffer.log_probs.push(0.0); // We didn't save log probs
+            rollout_buffer.log_probs.push(log_probs_array[i]);
             rollout_buffer.dones.push(dones_array[i] > 0.5);
         }
         
@@ -407,7 +417,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         loop {
             let normalized_state = normalizer.normalize(&state);
-            let (action, _, _) = agent.act(normalized_state.view())?;
+            // Evaluate greedily. act() samples from the policy, which is right for
+            // collecting a rollout and wrong for measuring what the policy learned.
+            let probs = agent.get_action_probs(normalized_state.view());
+            let action = probs
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             let (next_state, reward, done) = eval_env.step(action);
             
             episode_reward += reward;

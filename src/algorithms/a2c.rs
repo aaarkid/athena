@@ -218,8 +218,22 @@ impl A2CAgent {
             returns.clone()
         ).expect("Failed to create critic targets");
 
-        // Train critic network
-        self.critic.train_minibatch(states.view(), critic_targets.view(), learning_rate);
+        // Train critic network. value_coeff scales its step: the actor and critic are
+        // separate networks, so there is no joint loss for the coefficient to weight.
+        let critic_lr = learning_rate * self.value_coeff;
+        match self.max_grad_norm {
+            Some(max_norm) => {
+                self.critic.train_minibatch_clipped(
+                    states.view(),
+                    critic_targets.view(),
+                    critic_lr,
+                    max_norm,
+                );
+            }
+            None => {
+                self.critic.train_minibatch(states.view(), critic_targets.view(), critic_lr);
+            }
+        }
 
         // Compute critic loss for reporting
         let critic_outputs = self.critic.forward_batch(states.view());
@@ -284,7 +298,23 @@ impl A2CAgent {
         let total_actor_loss = actor_loss - self.entropy_coeff * entropy;
 
         // Train actor using policy gradient method
-        self.actor.train_policy_gradient(states.view(), policy_gradients.view(), learning_rate);
+        match self.max_grad_norm {
+            Some(max_norm) => {
+                self.actor.train_policy_gradient_clipped(
+                    states.view(),
+                    policy_gradients.view(),
+                    learning_rate,
+                    max_norm,
+                );
+            }
+            None => {
+                self.actor.train_policy_gradient(
+                    states.view(),
+                    policy_gradients.view(),
+                    learning_rate,
+                );
+            }
+        }
 
         Ok((total_actor_loss, critic_loss * self.value_coeff))
     }
@@ -536,7 +566,7 @@ mod tests {
         // The last step ends the episode. Without that the return bootstraps off the
         // value being trained and grows without bound, which says nothing about whether
         // the critic learns.
-        for _ in 0..50 {
+        for _ in 0..600 {
             let experiences: Vec<A2CExperience> = (0..10).map(|step| {
                 A2CExperience {
                     state: state.clone(),
@@ -549,7 +579,7 @@ mod tests {
                 }
             }).collect();
 
-            agent.train(&experiences, 0.01).unwrap();
+            agent.train(&experiences, 0.1).unwrap();
         }
 
         // 10 steps of reward 10 discounted at 0.99 is 10 * (1 - 0.99^10) / 0.01

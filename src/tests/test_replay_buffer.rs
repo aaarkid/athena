@@ -193,27 +193,30 @@ fn test_prioritized_replay_buffer_importance_weights() {
         buffer.add_with_priority(exp, (i + 1) as f32);
     }
     
-    // Sampling is with replacement, so a batch of 5 can legitimately draw one index
-    // five times and produce five equal weights. Draw enough that every priority is
-    // represented; the five priorities differ, so the weights have to differ too.
-    let spread = |beta: f32| -> f32 {
-        let (_, weights, _) = buffer.sample_with_weights(200, beta);
-        assert!(weights.iter().all(|w| w.is_finite() && *w > 0.0));
+    // sample_with_weights caps the batch at the buffer length, so one call draws at
+    // most 5 and can legitimately draw the same index every time. Repeat and take the
+    // widest spread seen, which converges on (p_max / p_min)^beta.
+    let widest_spread = |beta: f32| -> f32 {
+        let mut widest = 1.0f32;
+        for _ in 0..50 {
+            let (_, weights, _) = buffer.sample_with_weights(5, beta);
+            assert!(weights.iter().all(|w| w.is_finite() && *w > 0.0));
 
-        let min = weights.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        assert!(max > min, "importance weights did not vary at beta {}", beta);
-        max / min
+            let min = weights.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            widest = widest.max(max / min);
+        }
+        widest
     };
 
-    // Beta is the exponent on the correction, so raising it widens the spread
-    let partial = spread(0.4);
-    let full = spread(1.0);
+    // The weight is (N * p)^-beta, so beta is the exponent on the spread between the
+    // most and least likely entry. Raising it has to widen that spread.
+    let partial = widest_spread(0.4);
+    let full = widest_spread(1.0);
+
+    assert!(partial > 1.0, "weights did not vary at beta 0.4");
     assert!(
-        full > partial,
-        "beta 1.0 spread {} should exceed beta 0.4 spread {}",
-        full,
-        partial
+        full > partial * 1.2,
     );
 }
 
@@ -238,4 +241,97 @@ fn test_prioritized_replay_buffer_rank_based() {
     assert_eq!(experiences.len(), 3);
     assert_eq!(weights.len(), 3);
     assert_eq!(indices.len(), 3);
+}
+
+
+#[test]
+fn a_high_priority_entry_is_drawn_far_more_often() {
+    let mut buffer = PrioritizedReplayBuffer::new(10, PriorityMethod::Proportional { alpha: 1.0 });
+
+    for i in 0..5 {
+        buffer.add_with_priority(
+            Experience {
+                state: array![i as f32],
+                action: i,
+                reward: 0.0,
+                next_state: array![(i + 1) as f32],
+                done: false,
+            },
+            if i == 0 { 100.0 } else { 1.0 },
+        );
+    }
+
+    let mut hits = 0;
+    for _ in 0..200 {
+        let (experiences, _, _) = buffer.sample_with_weights(1, 1.0);
+        if experiences[0].action == 0 {
+            hits += 1;
+        }
+    }
+
+    // Slot 0 carries 100 of the 104 total priority, so anything near chance means the
+    // priorities are not reaching the sampler
+    assert!(hits > 100, "high priority entry drawn {} times in 200", hits);
+}
+
+#[test]
+fn priorities_still_land_on_the_right_entry_after_an_eviction() {
+    let mut buffer = PrioritizedReplayBuffer::new(4, PriorityMethod::Proportional { alpha: 1.0 });
+
+    // Slots 0 to 3, carrying actions 0 to 3
+    for i in 0..4 {
+        buffer.add_with_priority(
+            Experience {
+                state: array![i as f32],
+                action: i,
+                reward: 0.0,
+                next_state: array![(i + 1) as f32],
+                done: false,
+            },
+            1.0,
+        );
+    }
+    assert_eq!(buffer.first_slot(), 0);
+
+    // This evicts slot 0 and shifts every position down by one. A positional index
+    // captured before the add would now point at the wrong experience.
+    buffer.add_with_priority(
+        Experience {
+            state: array![99.0],
+            action: 99,
+            reward: 0.0,
+            next_state: array![100.0],
+            done: false,
+        },
+        1.0,
+    );
+    assert_eq!(buffer.first_slot(), 1);
+
+    // Slot 2 still means the experience carrying action 2, even though it has moved
+    // from position 2 to position 1
+    buffer.update_priorities(&[2], &[100.0]);
+    // Slot 0 is gone, so this must be dropped rather than written to position 0
+    buffer.update_priorities(&[0], &[100.0]);
+
+    let mut counts = std::collections::HashMap::new();
+    for _ in 0..400 {
+        let (drawn, _, _) = buffer.sample_with_weights(1, 1.0);
+        *counts.entry(drawn[0].action).or_insert(0) += 1;
+    }
+
+    let raised = counts.get(&2).copied().unwrap_or(0);
+    assert!(
+        raised > 300,
+        "action 2 carries 100 of 103 total priority but was drawn {} times in 400",
+        raised
+    );
+
+    // Action 1 sits at position 0, which is where a stale positional index would have
+    // written, so it must still be at its original priority
+    let action_one = counts.get(&1).copied().unwrap_or(0);
+    assert!(
+        action_one < 60,
+        "action 1 was drawn {} times, so the evicted slot wrote to position 0",
+        action_one
+    );
 }

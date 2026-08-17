@@ -20,7 +20,11 @@ pub struct BatchNormLayer {
     /// Running variance for inference
     pub running_var: Array1<f32>,
     
-    /// Momentum for running statistics
+    /// Weight given to the current batch when updating the running statistics.
+    ///
+    /// `running = running * (1 - momentum) + batch * momentum`, so a larger value tracks
+    /// the current batch more closely. 0.1 is the usual choice. This is the same sense
+    /// as PyTorch's `momentum`, and the opposite of a momentum term in an optimizer.
     pub momentum: f32,
     
     /// Small constant for numerical stability
@@ -34,6 +38,13 @@ pub struct BatchNormLayer {
     cached_std: Option<Array1<f32>>,
     cached_mean: Option<Array1<f32>>,
     cached_inputs: Option<Array2<f32>>,
+
+    /// Whether the last forward pass used batch statistics.
+    ///
+    /// Forward falls back to the running statistics for a batch of one even in training
+    /// mode, since a single sample has no variance. Backward has to take the same branch
+    /// or it reads caches that pass never wrote.
+    cached_used_batch_stats: bool,
 }
 
 impl BatchNormLayer {
@@ -47,6 +58,7 @@ impl BatchNormLayer {
             momentum,
             epsilon,
             training: true,
+            cached_used_batch_stats: false,
             cached_normalized: None,
             cached_std: None,
             cached_mean: None,
@@ -64,7 +76,10 @@ impl BatchNormLayer {
         let batch_size = inputs.shape()[0];
         let num_features = inputs.shape()[1];
         
-        if self.training && batch_size > 1 {
+        let use_batch_stats = self.training && batch_size > 1;
+        self.cached_used_batch_stats = use_batch_stats;
+
+        if use_batch_stats {
             // Training mode: use batch statistics
             let mean = inputs.mean_axis(Axis(0))
                 .unwrap_or_else(|| Array1::zeros(num_features));
@@ -101,6 +116,7 @@ impl BatchNormLayer {
         } else {
             // Inference mode: use running statistics
             let std = self.running_var.mapv(|v| (v + self.epsilon).sqrt());
+            self.cached_inputs = Some(inputs.to_owned());
             
             let mut output = Array2::zeros(inputs.dim());
             for i in 0..batch_size {
@@ -116,76 +132,76 @@ impl BatchNormLayer {
     
     /// Backward pass for batch normalization
     fn batch_norm_backward(&self, grad_output: ArrayView2<f32>) -> (Array2<f32>, Array1<f32>, Array1<f32>) {
-        if !self.training {
-            // In inference mode, just pass through scaled gradients
+        // Take the same branch the last forward pass took, not whatever `training` says
+        // now: a batch of one uses the running statistics even in training mode, and the
+        // caches this branch needs were never written in that case.
+        if !self.cached_used_batch_stats {
             let batch_size = grad_output.shape()[0];
             let num_features = grad_output.shape()[1];
             let std = self.running_var.mapv(|v| (v + self.epsilon).sqrt());
-            
+
             let mut grad_input = Array2::zeros(grad_output.dim());
+            let mut grad_gamma = Array1::zeros(num_features);
+
             for i in 0..batch_size {
                 for j in 0..num_features {
                     grad_input[[i, j]] = grad_output[[i, j]] * self.gamma[j] / std[j];
+
+                    // gamma multiplies the normalized value, so its gradient carries that
+                    // value. Using grad_output alone makes it a copy of grad_beta.
+                    let inputs = self.cached_inputs.as_ref();
+                    let normalized = match inputs {
+                        Some(x) => (x[[i, j]] - self.running_mean[j]) / std[j],
+                        None => 0.0,
+                    };
+                    grad_gamma[j] += grad_output[[i, j]] * normalized;
                 }
             }
-            
-            let grad_gamma = grad_output.sum_axis(Axis(0));
+
             let grad_beta = grad_output.sum_axis(Axis(0));
-            
+
             return (grad_input, grad_gamma, grad_beta);
         }
-        
-        // Training mode: full backpropagation
+
+        // Training mode: full backpropagation.
+        //
+        // With x_hat the normalized input and g = grad_output * gamma,
+        //   dx = (N * g - sum(g) - x_hat * sum(g * x_hat)) / (N * std)
+        // The mean and variance paths are both folded into that expression.
         let normalized = self.cached_normalized.as_ref()
             .expect("No cached normalized values. Forward must be called before backward.");
         let std = self.cached_std.as_ref()
             .expect("No cached std values.");
-        let mean = self.cached_mean.as_ref()
-            .expect("No cached mean values.");
-        let inputs = self.cached_inputs.as_ref()
-            .expect("No cached inputs.");
-            
-        let batch_size = grad_output.shape()[0] as f32;
+
+        let rows = grad_output.shape()[0];
         let num_features = grad_output.shape()[1];
-        
+        let batch_size = rows as f32;
+
         // Gradients w.r.t. gamma and beta
         let grad_gamma = (grad_output.to_owned() * normalized).sum_axis(Axis(0));
         let grad_beta = grad_output.sum_axis(Axis(0));
-        
-        // Gradient w.r.t. normalized inputs
+
+        // Gradient w.r.t. the normalized inputs
         let mut grad_normalized = Array2::zeros(grad_output.dim());
-        for i in 0..grad_output.shape()[0] {
+        for i in 0..rows {
             for j in 0..num_features {
                 grad_normalized[[i, j]] = grad_output[[i, j]] * self.gamma[j];
             }
         }
-        
-        // Gradient w.r.t. variance
-        let mut grad_var = Array1::<f32>::zeros(num_features);
-        for i in 0..grad_output.shape()[0] {
+
+        let sum_grad = grad_normalized.sum_axis(Axis(0));
+        let sum_grad_times_normalized = (&grad_normalized * normalized).sum_axis(Axis(0));
+
+        let mut grad_input = Array2::zeros(grad_output.dim());
+        for i in 0..rows {
             for j in 0..num_features {
-                grad_var[j] += grad_normalized[[i, j]] * (inputs[[i, j]] - mean[j]) * -0.5 * std[j].powi(-3);
+                grad_input[[i, j]] = (batch_size * grad_normalized[[i, j]]
+                    - sum_grad[j]
+                    - normalized[[i, j]] * sum_grad_times_normalized[j])
+                    / (batch_size * std[j]);
             }
         }
-        
-        // Gradient w.r.t. mean
-        let grad_mean_1 = grad_normalized.sum_axis(Axis(0)) * -1.0 / std;
-        let mut grad_mean_2 = Array1::<f32>::zeros(num_features);
-        for j in 0..num_features {
-            grad_mean_2[j] = grad_var[j] * -2.0 * (inputs.column(j).mean().unwrap_or(0.0) - mean[j]) / batch_size;
-        }
-        let grad_mean = grad_mean_1 + grad_mean_2;
-        
-        // Gradient w.r.t. input
-        let mut grad_input = Array2::zeros(inputs.dim());
-        for i in 0..inputs.shape()[0] {
-            for j in 0..num_features {
-                grad_input[[i, j]] = grad_normalized[[i, j]] / std[j] 
-                    + grad_var[j] * 2.0 * (inputs[[i, j]] - mean[j]) / batch_size
-                    + grad_mean[j] / batch_size;
-            }
-        }
-        
+
         (grad_input, grad_gamma, grad_beta)
     }
 }

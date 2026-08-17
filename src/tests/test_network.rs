@@ -139,3 +139,82 @@ fn test_network_save_load() {
     // Cleanup
     fs::remove_file(path).ok();
 }
+
+#[test]
+fn gradient_clipping_caps_the_step_but_keeps_its_direction() {
+    use crate::optimizer::SGD;
+
+    let build = || {
+        let mut network = NeuralNetwork::new(
+            &[3, 4, 2],
+            &[Activation::Relu, Activation::Linear],
+            OptimizerWrapper::SGD(SGD::new()),
+        );
+        // Same starting weights for both networks, so the only difference is the clip
+        for layer in network.layers.iter_mut() {
+            layer.weights.fill(0.1);
+            layer.biases.fill(0.0);
+        }
+        network
+    };
+
+    let inputs = ndarray::Array2::from_shape_fn((4, 3), |(i, j)| (i + j) as f32 * 0.5);
+    // Targets far from the outputs, so the unclipped gradient is large
+    let targets = ndarray::Array2::from_elem((4, 2), 100.0);
+
+    let mut unclipped = build();
+    let mut clipped = build();
+
+    let before = build().forward_batch(inputs.view());
+
+    unclipped.train_minibatch(inputs.view(), targets.view(), 0.01);
+    let norm = clipped.train_minibatch_clipped(inputs.view(), targets.view(), 0.01, 0.5);
+
+    assert!(norm > 0.5, "test needs a gradient above the cap, got {}", norm);
+
+    let unclipped_step = (&unclipped.forward_batch(inputs.view()) - &before).mapv(f32::abs).sum();
+    let clipped_step = (&clipped.forward_batch(inputs.view()) - &before).mapv(f32::abs).sum();
+
+    assert!(
+        clipped_step < unclipped_step,
+        "clipping should shorten the step: {} against {}",
+        clipped_step,
+        unclipped_step
+    );
+
+    // Both move toward the target, so clipping changed the length and not the direction
+    assert!(clipped_step > 0.0);
+}
+
+#[test]
+fn gradient_clipping_leaves_a_small_gradient_alone() {
+    use crate::optimizer::SGD;
+
+    let build = || {
+        let mut network = NeuralNetwork::new(
+            &[2, 2],
+            &[Activation::Linear],
+            OptimizerWrapper::SGD(SGD::new()),
+        );
+        for layer in network.layers.iter_mut() {
+            layer.weights.fill(0.1);
+            layer.biases.fill(0.0);
+        }
+        network
+    };
+
+    let inputs = ndarray::Array2::from_elem((2, 2), 0.01);
+    let targets = build().forward_batch(inputs.view()) + 0.001;
+
+    let mut unclipped = build();
+    let mut clipped = build();
+
+    unclipped.train_minibatch(inputs.view(), targets.view(), 0.01);
+    let norm = clipped.train_minibatch_clipped(inputs.view(), targets.view(), 0.01, 100.0);
+
+    assert!(norm < 100.0, "test needs a gradient under the cap, got {}", norm);
+
+    for (a, b) in unclipped.layers[0].weights.iter().zip(clipped.layers[0].weights.iter()) {
+        assert!((a - b).abs() < 1e-9, "an under-cap gradient must not be scaled");
+    }
+}

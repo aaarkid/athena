@@ -3,7 +3,7 @@
 //! This demonstrates a DQN agent learning to balance a pole.
 
 use athena::agent::DqnAgent;
-use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::optimizer::{Adam, OptimizerWrapper};
 use athena::replay_buffer::{ReplayBuffer, Experience};
 use ndarray::{Array1, array};
 use std::f32::consts::PI;
@@ -91,7 +91,9 @@ fn main() {
     let state_size = 4;
     let action_size = 2;  // left or right
     let layer_sizes = &[state_size, 24, 24, action_size];
-    let optimizer = OptimizerWrapper::SGD(SGD::new());
+    // Adam, not SGD. CartPole's return reaches a few hundred and gamma 0.95 puts Q
+    // around 20; a squared error at that magnitude diverges under plain SGD.
+    let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
     
     let mut agent = DqnAgent::new(
         layer_sizes,
@@ -107,7 +109,7 @@ fn main() {
     // Training parameters
     let max_episodes = 500;
     let batch_size = 32;
-    let learning_rate = 0.01;
+    let learning_rate = 0.001;
     let gamma = 0.95;
     
     let mut env = CartPole::new();
@@ -116,6 +118,9 @@ fn main() {
     
     println!("Training... (goal: average 195 steps over 100 episodes)");
     
+    let train_every = 4;
+    let mut total_steps = 0usize;
+
     for episode in 0..max_episodes {
         let mut state = env.reset();
         let mut steps = 0;
@@ -137,8 +142,11 @@ fn main() {
                 done,
             });
             
-            // Train when we have enough samples
-            if replay_buffer.len() >= batch_size {
+            // Train once every few environment steps. Training on every step puts the
+            // update-to-data ratio at 32 gradient steps per new transition, which
+            // chases noise.
+            total_steps += 1;
+            if replay_buffer.len() >= batch_size && total_steps % train_every == 0 {
                 let batch = replay_buffer.sample(batch_size);
                 agent.train_on_batch(&batch, gamma, learning_rate).unwrap();
             }
