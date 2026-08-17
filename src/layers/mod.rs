@@ -1,7 +1,11 @@
 //! # Neural Network Layers Module
 //! 
 //! This module provides various layer types for building neural networks.
-//! Each layer type implements the `LayerTrait` for forward and backward propagation.
+//! Most layer types implement the `LayerTrait` for forward and backward
+//! propagation. LSTM and GRU do not: the trait carries one weight matrix and one
+//! bias vector per layer, and they have several, so they expose `forward_sequence`
+//! and `backward_sequence` instead and are trained through
+//! `crate::recurrent::RecurrentNetwork`.
 //! 
 //! ## Available Layers
 //! 

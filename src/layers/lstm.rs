@@ -1,13 +1,16 @@
-use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, ArrayView3, Axis};
+use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
-use super::traits::Layer as LayerTrait;
-use super::traits::Layer;
 
 /// LSTM (Long Short-Term Memory) layer for sequence processing
-/// 
+///
 /// The LSTM layer maintains a cell state and hidden state across time steps,
 /// allowing it to learn long-term dependencies in sequential data.
+///
+/// This layer does not implement the `Layer` trait. That trait carries one weight
+/// matrix and one bias vector per layer, and an LSTM has eight and four, so its
+/// gradients cannot travel through it. Train through `forward_sequence` and
+/// `backward_sequence`, or use `crate::recurrent::RecurrentNetwork`.
 #[derive(Clone)]
 pub struct LSTMLayer {
     /// Input size
@@ -299,6 +302,46 @@ impl LSTMLayer {
         }
     }
     
+    /// Apply gradients from `backward_sequence` with a plain SGD step.
+    ///
+    /// The optimizers in `crate::optimizer` key their state by layer index and
+    /// assume one weight matrix per layer, so they cannot hold state for the eight
+    /// matrices here.
+    pub fn apply_gradients(&mut self, gradients: &LSTMGradients, learning_rate: f32) {
+        self.w_ii.scaled_add(-learning_rate, &gradients.dw_ii);
+        self.w_hi.scaled_add(-learning_rate, &gradients.dw_hi);
+        self.b_i.scaled_add(-learning_rate, &gradients.db_i);
+
+        self.w_if.scaled_add(-learning_rate, &gradients.dw_if);
+        self.w_hf.scaled_add(-learning_rate, &gradients.dw_hf);
+        self.b_f.scaled_add(-learning_rate, &gradients.db_f);
+
+        self.w_ig.scaled_add(-learning_rate, &gradients.dw_ig);
+        self.w_hg.scaled_add(-learning_rate, &gradients.dw_hg);
+        self.b_g.scaled_add(-learning_rate, &gradients.db_g);
+
+        self.w_io.scaled_add(-learning_rate, &gradients.dw_io);
+        self.w_ho.scaled_add(-learning_rate, &gradients.dw_ho);
+        self.b_o.scaled_add(-learning_rate, &gradients.db_o);
+    }
+
+    /// Advance the layer by one time step for a batch of inputs.
+    ///
+    /// Shape `(batch_size, input_size)` in, `(batch_size, hidden_size)` out. The
+    /// hidden and cell states carry over to the next call, so call `reset_states`
+    /// between sequences. Only the last step stays in the cache, so this is for
+    /// inference and for stepping an environment, not for training.
+    pub fn forward_step(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        let batch_size = inputs.shape()[0];
+        let input_3d = inputs
+            .to_owned()
+            .into_shape((batch_size, 1, self.input_size))
+            .expect("input width must equal input_size");
+
+        let output = self.forward_sequence(input_3d.view());
+        output.slice(s![.., 0, ..]).to_owned()
+    }
+
     // Activation functions
     fn sigmoid(x: &Array2<f32>) -> Array2<f32> {
         x.mapv(|v| 1.0 / (1.0 + (-v).exp()))
@@ -324,85 +367,6 @@ pub struct LSTMGradients {
     pub dw_ig: Array2<f32>, pub dw_hg: Array2<f32>, pub db_g: Array1<f32>,
     pub dw_io: Array2<f32>, pub dw_ho: Array2<f32>, pub db_o: Array1<f32>,
     pub dx: Array3<f32>,
-}
-
-// Implement Layer trait for compatibility
-impl LayerTrait for LSTMLayer {
-    fn weights_mut(&mut self) -> &mut Array2<f32> {
-        &mut self.w_ii // Return one of the weight matrices
-    }
-    
-    fn biases_mut(&mut self) -> &mut Array1<f32> {
-        &mut self.b_i // Return one of the bias vectors
-    }
-    
-    fn weights(&self) -> &Array2<f32> {
-        &self.w_ii // Return one of the weight matrices
-    }
-    
-    fn biases(&self) -> &Array1<f32> {
-        &self.b_i // Return one of the bias vectors
-    }
-    
-    fn output_size(&self) -> usize {
-        self.hidden_size
-    }
-    
-    fn input_size(&self) -> usize {
-        self.input_size
-    }
-    
-    fn clone_box(&self) -> Box<dyn Layer> {
-        Box::new(self.clone())
-    }
-    fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32> {
-        // Convert 1D input to 3D (batch_size=1, seq_len=1, input_size)
-        let input_3d = input.to_owned()
-            .insert_axis(Axis(0))
-            .insert_axis(Axis(0));
-        
-        let output = self.forward_sequence(input_3d.view());
-        
-        // Extract the output
-        if self.return_sequences {
-            output.slice(s![0, 0, ..]).to_owned()
-        } else {
-            output.slice(s![0, 0, ..]).to_owned()
-        }
-    }
-    
-    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
-    /// carry the gradient back through time. Use `backward_sequence` instead; stacking this
-    /// layer inside a `NeuralNetwork` will not train it.
-    fn backward(&self, _output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));
-        let dummy_bias = Array1::zeros(self.hidden_size);
-        (dummy_weights, dummy_bias)
-    }
-    
-    fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        // Convert 2D input to 3D (batch_size, seq_len=1, input_size)
-        let batch_size = inputs.shape()[0];
-        let input_3d = inputs.to_owned()
-            .into_shape((batch_size, 1, self.input_size))
-            .expect("Failed to reshape");
-        
-        let output = self.forward_sequence(input_3d.view());
-        
-        // Extract the output
-        output.slice(s![.., 0, ..]).to_owned()
-    }
-    
-    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
-    /// carry the gradient back through time. Use `backward_sequence` instead; stacking this
-    /// layer inside a `NeuralNetwork` will not train it.
-    fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
-        let batch_size = output_errors.shape()[0];
-        let dummy_output = Array2::zeros((batch_size, self.input_size));
-        let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));
-        let dummy_bias = Array1::zeros(self.hidden_size);
-        (dummy_output, dummy_weights, dummy_bias)
-    }
 }
 
 // Re-export for cleaner imports

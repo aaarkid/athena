@@ -1,13 +1,16 @@
-use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, ArrayView3, Axis};
+use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
-use super::traits::Layer as LayerTrait;
-use super::traits::Layer;
 
 /// GRU (Gated Recurrent Unit) layer for sequence processing
-/// 
+///
 /// The GRU layer is a simplified version of LSTM with fewer parameters,
 /// combining the forget and input gates into a single update gate.
+///
+/// This layer does not implement the `Layer` trait. That trait carries one weight
+/// matrix and one bias vector per layer, and a GRU has six and three, so its
+/// gradients cannot travel through it. Train through `forward_sequence` and
+/// `backward_sequence`, or use `crate::recurrent::RecurrentNetwork`.
 #[derive(Clone)]
 pub struct GRULayer {
     /// Input size
@@ -243,6 +246,42 @@ impl GRULayer {
         }
     }
     
+    /// Apply gradients from `backward_sequence` with a plain SGD step.
+    ///
+    /// The optimizers in `crate::optimizer` key their state by layer index and
+    /// assume one weight matrix per layer, so they cannot hold state for the six
+    /// matrices here.
+    pub fn apply_gradients(&mut self, gradients: &GRUGradients, learning_rate: f32) {
+        self.w_ir.scaled_add(-learning_rate, &gradients.dw_ir);
+        self.w_hr.scaled_add(-learning_rate, &gradients.dw_hr);
+        self.b_r.scaled_add(-learning_rate, &gradients.db_r);
+
+        self.w_iz.scaled_add(-learning_rate, &gradients.dw_iz);
+        self.w_hz.scaled_add(-learning_rate, &gradients.dw_hz);
+        self.b_z.scaled_add(-learning_rate, &gradients.db_z);
+
+        self.w_in.scaled_add(-learning_rate, &gradients.dw_in);
+        self.w_hn.scaled_add(-learning_rate, &gradients.dw_hn);
+        self.b_n.scaled_add(-learning_rate, &gradients.db_n);
+    }
+
+    /// Advance the layer by one time step for a batch of inputs.
+    ///
+    /// Shape `(batch_size, input_size)` in, `(batch_size, hidden_size)` out. The
+    /// hidden state carries over to the next call, so call `reset_state` between
+    /// sequences. Only the last step stays in the cache, so this is for inference
+    /// and for stepping an environment, not for training.
+    pub fn forward_step(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        let batch_size = inputs.shape()[0];
+        let input_3d = inputs
+            .to_owned()
+            .into_shape((batch_size, 1, self.input_size))
+            .expect("input width must equal input_size");
+
+        let output = self.forward_sequence(input_3d.view());
+        output.slice(s![.., 0, ..]).to_owned()
+    }
+
     // Activation functions
     fn sigmoid(x: &Array2<f32>) -> Array2<f32> {
         x.mapv(|v| 1.0 / (1.0 + (-v).exp()))
@@ -267,85 +306,6 @@ pub struct GRUGradients {
     pub dw_iz: Array2<f32>, pub dw_hz: Array2<f32>, pub db_z: Array1<f32>,
     pub dw_in: Array2<f32>, pub dw_hn: Array2<f32>, pub db_n: Array1<f32>,
     pub dx: Array3<f32>,
-}
-
-// Implement Layer trait for compatibility
-impl LayerTrait for GRULayer {
-    fn weights_mut(&mut self) -> &mut Array2<f32> {
-        &mut self.w_ir // Return one of the weight matrices
-    }
-    
-    fn biases_mut(&mut self) -> &mut Array1<f32> {
-        &mut self.b_r // Return one of the bias vectors
-    }
-    
-    fn weights(&self) -> &Array2<f32> {
-        &self.w_ir // Return one of the weight matrices
-    }
-    
-    fn biases(&self) -> &Array1<f32> {
-        &self.b_r // Return one of the bias vectors
-    }
-    
-    fn output_size(&self) -> usize {
-        self.hidden_size
-    }
-    
-    fn input_size(&self) -> usize {
-        self.input_size
-    }
-    
-    fn clone_box(&self) -> Box<dyn Layer> {
-        Box::new(self.clone())
-    }
-    fn forward(&mut self, input: ArrayView1<f32>) -> Array1<f32> {
-        // Convert 1D input to 3D (batch_size=1, seq_len=1, input_size)
-        let input_3d = input.to_owned()
-            .insert_axis(Axis(0))
-            .insert_axis(Axis(0));
-        
-        let output = self.forward_sequence(input_3d.view());
-        
-        // Extract the output
-        if self.return_sequences {
-            output.slice(s![0, 0, ..]).to_owned()
-        } else {
-            output.slice(s![0, 0, ..]).to_owned()
-        }
-    }
-    
-    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
-    /// carry the gradient back through time. Use `backward_sequence` instead; stacking
-    /// this layer inside a `NeuralNetwork` will not train it.
-    fn backward(&self, _output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));
-        let dummy_bias = Array1::zeros(self.hidden_size);
-        (dummy_weights, dummy_bias)
-    }
-    
-    fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        // Convert 2D input to 3D (batch_size, seq_len=1, input_size)
-        let batch_size = inputs.shape()[0];
-        let input_3d = inputs.to_owned()
-            .into_shape((batch_size, 1, self.input_size))
-            .expect("Failed to reshape");
-        
-        let output = self.forward_sequence(input_3d.view());
-        
-        // Extract the output
-        output.slice(s![.., 0, ..]).to_owned()
-    }
-    
-    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
-    /// carry the gradient back through time. Use `backward_sequence` instead; stacking this
-    /// layer inside a `NeuralNetwork` will not train it.
-    fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
-        let batch_size = output_errors.shape()[0];
-        let dummy_output = Array2::zeros((batch_size, self.input_size));
-        let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));
-        let dummy_bias = Array1::zeros(self.hidden_size);
-        (dummy_output, dummy_weights, dummy_bias)
-    }
 }
 
 // Re-export for cleaner imports
