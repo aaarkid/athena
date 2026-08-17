@@ -647,22 +647,25 @@ mod tests {
         let state = Array1::from_vec(vec![0.5, 0.5, 0.5, 0.5]);
         let initial_value = agent.get_value(state.view());
 
-        // Train repeatedly with high rewards. Enough iterations that the result does
-        // not depend on where the random initialisation happened to start.
-        for _ in 0..200 {
+        // Ten steps of reward 10, the last one terminal. Ending the episode matters:
+        // without it the return bootstraps off the value being trained, the target
+        // compounds every iteration, and the run can diverge instead of converging.
+        // Terminating makes the target a fixed 10 * sum(gamma^k, k=0..9), about 95.6.
+        let expected_return: f32 = (0..10).map(|k| 0.99f32.powi(k) * 10.0).sum();
+
+        for _ in 0..100 {
             let mut buffer = PPORolloutBuffer::new();
-            for _ in 0..10 {
+            for step in 0..10 {
                 buffer.add(
                     state.clone(),
                     0,
-                    10.0,  // High reward
+                    10.0,
                     agent.get_value(state.view()),
                     -0.5,
-                    false,
+                    step == 9,
                 );
             }
-            let last_value = agent.get_value(state.view());
-            agent.compute_gae(&mut buffer, last_value);
+            agent.compute_gae(&mut buffer, 0.0);
             agent.update(&buffer, 0.01).unwrap();
         }
 
@@ -670,5 +673,8 @@ mod tests {
         assert!(final_value > initial_value,
                 "Value should increase with high rewards. Initial: {}, Final: {}",
                 initial_value, final_value);
+        assert!(final_value > expected_return * 0.5 && final_value < expected_return * 2.0,
+                "Value should approach the return of {}, got {}",
+                expected_return, final_value);
     }
 }
