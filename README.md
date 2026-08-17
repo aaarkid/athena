@@ -24,7 +24,9 @@ bindings and WebAssembly.
 
 - Customizable Neural Network architecture
 - Support for various activation functions (ReLU, Sigmoid, Tanh, etc.)
-- Advanced layer types: LSTM, GRU, Convolutional, BatchNorm, Dropout
+- Layer types: Convolutional, Pooling, BatchNorm, Dropout, Embedding
+- Recurrent layers (LSTM, GRU) with backpropagation through time, trained through
+  `RecurrentNetwork`
 - Multiple RL algorithms: DQN, A2C, PPO, SAC, TD3
 - A Replay Buffer for experience replay
 - Different Optimizers (SGD, Adam, RMSProp)
