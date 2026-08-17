@@ -522,15 +522,17 @@ mod tests {
         let state = Array1::from_vec(vec![0.5, 0.5, 0.5, 0.5]);
         let initial_value = agent.get_value(state.view());
 
-        // Train multiple times with high rewards
+        // The last step ends the episode. Without that the return bootstraps off the
+        // value being trained and grows without bound, which says nothing about whether
+        // the critic learns.
         for _ in 0..50 {
-            let experiences: Vec<A2CExperience> = (0..10).map(|_| {
+            let experiences: Vec<A2CExperience> = (0..10).map(|step| {
                 A2CExperience {
                     state: state.clone(),
                     action: 0,
                     reward: 10.0,  // High reward
                     next_state: state.clone(),
-                    done: false,
+                    done: step == 9,
                     log_prob: -0.5,
                     value: agent.get_value(state.view()),
                 }
@@ -539,11 +541,16 @@ mod tests {
             agent.train(&experiences, 0.01).unwrap();
         }
 
+        // 10 steps of reward 10 discounted at 0.99 is 10 * (1 - 0.99^10) / 0.01
+        let target: f32 = 10.0 * (1.0 - 0.99f32.powi(10)) / 0.01;
         let final_value = agent.get_value(state.view());
-        // Value should increase toward the high return
+
         assert!(final_value > initial_value,
                 "Value should increase with high rewards. Initial: {}, Final: {}",
                 initial_value, final_value);
+        assert!(final_value > target * 0.25 && final_value < target * 2.0,
+                "Value should approach the discounted return {}, got {}",
+                target, final_value);
     }
 
     #[test]
