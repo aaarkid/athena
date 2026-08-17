@@ -271,7 +271,7 @@ pub mod advanced {
     //! Export models for deployment:
     //! 
     //! ```rust,no_run
-    //! use athena::export::onnx::OnnxExporter;
+    //! use athena::export::json::NetworkExporter;
     //! use athena::network::NeuralNetwork;
     //! use athena::activations::Activation;
     //! use athena::optimizer::{OptimizerWrapper, SGD};
@@ -279,7 +279,7 @@ pub mod advanced {
     //! 
     //! // Create a simple network
     //! let network = NeuralNetwork::new(&[784, 128, 10], &[Activation::Relu, Activation::Linear], OptimizerWrapper::SGD(SGD::new()));
-    //! OnnxExporter::export(&network, Path::new("model.onnx")).unwrap();
+    //! NetworkExporter::export(&network, Path::new("model.txt")).unwrap();
     //! ```
 }
 

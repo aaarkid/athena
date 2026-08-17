@@ -6,21 +6,20 @@ use crate::network::NeuralNetwork;
 use crate::activations::Activation;
 use crate::error::{AthenaError, Result};
 
-/// ONNX export functionality for neural networks
-pub struct OnnxExporter;
+/// Writes a network's structure and weights to disk.
+///
+/// This is not ONNX. It is a plain text and JSON dump that external tools can
+/// convert; a real ONNX writer would need the protobuf definitions.
+pub struct NetworkExporter;
 
-impl OnnxExporter {
-    /// Export a neural network to ONNX format
-    /// 
-    /// Note: This is a simplified implementation that exports the network structure
-    /// and weights in a format that can be converted to ONNX using external tools.
-    /// A full ONNX implementation would require the onnx protobuf definitions.
+impl NetworkExporter {
+    /// Write the architecture and weights as readable text
     pub fn export(network: &NeuralNetwork, path: &Path) -> Result<()> {
         let mut file = File::create(path)?;
         
         // Write header
         writeln!(file, "# Athena Neural Network Export")?;
-        writeln!(file, "# Format: Simplified ONNX-compatible")?;
+        writeln!(file, "# Format: athena network dump")?;
         writeln!(file, "# Version: 1.0")?;
         writeln!(file)?;
         
@@ -34,7 +33,7 @@ impl OnnxExporter {
             writeln!(file, "type: Dense")?;
             writeln!(file, "input_size: {}", layer.weights.shape()[0])?;
             writeln!(file, "output_size: {}", layer.weights.shape()[1])?;
-            writeln!(file, "activation: {}", activation_to_onnx(&layer.activation))?;
+            writeln!(file, "activation: {}", activation_op_name(&layer.activation))?;
             
             // Write weights
             writeln!(file, "weights_shape: [{}, {}]", layer.weights.shape()[0], layer.weights.shape()[1])?;
@@ -71,7 +70,7 @@ impl OnnxExporter {
                 "type": "Dense",
                 "input_size": layer.weights.shape()[0],
                 "output_size": layer.weights.shape()[1],
-                "activation": activation_to_onnx(&layer.activation),
+                "activation": activation_op_name(&layer.activation),
                 "weights": weights,
                 "biases": layer.biases.to_vec(),
             });
@@ -95,18 +94,11 @@ impl OnnxExporter {
         Ok(())
     }
     
-    /// Generate ONNX model using tract (when available)
-    /// This is a placeholder for future tract integration
-    pub fn export_with_tract(_network: &NeuralNetwork, _path: &Path) -> Result<()> {
-        Err(AthenaError::InvalidParameter {
-            name: "export_with_tract".to_string(),
-            reason: "Tract integration not yet implemented. Use export_json instead.".to_string(),
-        })
-    }
 }
 
-/// Convert Athena activation to ONNX operator name
-fn activation_to_onnx(activation: &Activation) -> &'static str {
+/// Name each activation the way ONNX names its operators, so a converter
+/// downstream does not have to guess
+fn activation_op_name(activation: &Activation) -> &'static str {
     match activation {
         Activation::Relu => "Relu",
         Activation::Sigmoid => "Sigmoid",
@@ -119,9 +111,9 @@ fn activation_to_onnx(activation: &Activation) -> &'static str {
 }
 
 /// Import functionality for ONNX models
-pub struct OnnxImporter;
+pub struct NetworkImporter;
 
-impl OnnxImporter {
+impl NetworkImporter {
     /// Import a network from JSON format
     pub fn import_json(path: &Path) -> Result<NetworkStructure> {
         use serde_json::Value;
@@ -231,7 +223,7 @@ mod tests {
             OptimizerWrapper::SGD(SGD::new()),
         );
         
-        OnnxExporter::export_json(&network, &path).unwrap();
+        NetworkExporter::export_json(&network, &path).unwrap();
         assert!(path.exists());
     }
     
@@ -246,14 +238,14 @@ mod tests {
             OptimizerWrapper::SGD(SGD::new()),
         );
         
-        OnnxExporter::export(&network, &path).unwrap();
+        NetworkExporter::export(&network, &path).unwrap();
         assert!(path.exists());
     }
     
     #[test]
     fn test_activation_conversion() {
-        assert_eq!(activation_to_onnx(&Activation::Relu), "Relu");
-        assert_eq!(activation_to_onnx(&Activation::Linear), "Identity");
+        assert_eq!(activation_op_name(&Activation::Relu), "Relu");
+        assert_eq!(activation_op_name(&Activation::Linear), "Identity");
         
         let act = onnx_to_activation("Relu").unwrap();
         assert!(matches!(act, Activation::Relu));

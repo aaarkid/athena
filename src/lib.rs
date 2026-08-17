@@ -61,7 +61,7 @@
 //! - [`builders`] - Builder patterns for convenient object construction
 //! - [`debug`] - Debugging utilities for network inspection
 //! - [`error`] - Error types and result handling
-//! - [`export`] - Model export functionality (ONNX)
+//! - [`export`] - Writing a trained network out to disk
 //! - [`layers`] - Neural network layers (Dense, BatchNorm, Dropout)
 //! - [`loss`] - Loss functions for training
 //! - [`metrics`] - Training metrics and tracking
