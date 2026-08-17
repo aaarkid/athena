@@ -312,9 +312,10 @@ impl LayerTrait for GRULayer {
         }
     }
     
+    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
+    /// carry the gradient back through time. Use `backward_sequence` instead; stacking
+    /// this layer inside a `NeuralNetwork` will not train it.
     fn backward(&self, _output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        // For compatibility, return dummy gradients
-        // Real GRU backward pass should use backward_sequence
         let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));
         let dummy_bias = Array1::zeros(self.hidden_size);
         (dummy_weights, dummy_bias)
@@ -333,8 +334,10 @@ impl LayerTrait for GRULayer {
         output.slice(s![.., 0, ..]).to_owned()
     }
     
+    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
+    /// carry the gradient back through time. Use `backward_sequence` instead; stacking this
+    /// layer inside a `NeuralNetwork` will not train it.
     fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
-        // For compatibility, return dummy gradients
         let batch_size = output_errors.shape()[0];
         let dummy_output = Array2::zeros((batch_size, self.input_size));
         let dummy_weights = Array2::zeros((self.input_size, self.hidden_size));

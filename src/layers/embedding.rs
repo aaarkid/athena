@@ -178,8 +178,10 @@ impl LayerTrait for EmbeddingLayer {
         self.forward_single(index)
     }
     
+    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
+    /// carry the gradient back through time. Use `backward_embeddings` instead; stacking this
+    /// layer inside a `NeuralNetwork` will not train it.
     fn backward(&self, _output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        // For compatibility, return dummy gradients
         let dummy_weights = Array2::zeros((1, self.embedding_dim));
         let dummy_bias = Array1::zeros(self.embedding_dim);
         (dummy_weights, dummy_bias)
@@ -195,10 +197,11 @@ impl LayerTrait for EmbeddingLayer {
         self.forward_sequence(&indices)
     }
     
+    /// The embedding gradients are real; the returned input gradient and bias
+    /// gradient are zeros, since an embedding table has neither.
     fn backward_batch(&self, output_errors: ArrayView2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
         let grad_embeddings = self.backward_embeddings(output_errors);
-        
-        // For compatibility, return dummy outputs
+
         let batch_size = output_errors.shape()[0];
         let dummy_output = Array2::zeros((batch_size, 1));
         let dummy_bias = Array1::zeros(self.embedding_dim);
