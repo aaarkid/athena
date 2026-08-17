@@ -2,7 +2,6 @@ use athena::layers::{EmbeddingLayer, Layer};
 use athena::network::NeuralNetwork;
 use athena::activations::Activation;
 use athena::optimizer::{OptimizerWrapper, Adam};
-use ndarray::Array1;
 use ndarray_rand::RandomExt;
 
 fn main() {
@@ -58,52 +57,63 @@ fn main() {
         vec![100, 110, 120], // "Terrible quality"
     ];
     
-    // Training loop (simplified)
+    // Training loop. The embedding table is not part of the NeuralNetwork, so its
+    // gradient has to be carried across by hand: the classifier reports the gradient
+    // with respect to its own input, average pooling splits that evenly over the
+    // tokens, and backward_embeddings scatters it into the table.
+    let samples: Vec<(&Vec<usize>, f32)> = positive_sentences
+        .iter()
+        .map(|s| (s, 1.0))
+        .chain(negative_sentences.iter().map(|s| (s, 0.0)))
+        .collect();
+
     println!("\nTraining sentiment classifier...");
-    for epoch in 0..5 {
+    let learning_rate = 0.05;
+    for epoch in 0..40 {
         let mut total_loss = 0.0;
-        
-        // Train on positive examples
-        for sentence in &positive_sentences {
-            // Get embeddings for sentence
+
+        for (sentence, label) in &samples {
             let embeddings = embedding_layer.forward_sequence(sentence);
-            // Average pooling over sequence
-            let avg_embedding = embeddings.mean_axis(ndarray::Axis(0)).unwrap();
-            
-            // Forward through classifier
-            let prediction = network.forward(avg_embedding.view());
-            let target = Array1::from_elem(1, 1.0); // Positive = 1
-            let loss = ((&prediction - &target) * (&prediction - &target)).sum();
-            total_loss += loss;
+            let pooled = embeddings.mean_axis(ndarray::Axis(0)).unwrap();
+            let input = pooled.insert_axis(ndarray::Axis(0));
+            let target = ndarray::Array2::from_elem((1, 1), *label);
+
+            let prediction = network.forward_batch(input.view());
+            total_loss += (&prediction - &target).mapv(|e| e * e).sum();
+
+            // Read the input gradient before training: it uses the pre-activations
+            // cached by the forward pass above
+            let output_errors = &prediction - &target;
+            let input_grad = network.input_gradient_batch(output_errors.view());
+            network.train_minibatch(input.view(), target.view(), learning_rate);
+
+            let scale = 1.0 / sentence.len() as f32;
+            let token_grads = ndarray::Array2::from_shape_fn(
+                (sentence.len(), embedding_dim),
+                |(_, d)| input_grad[[0, d]] * scale,
+            );
+            let table_grad = embedding_layer.backward_embeddings(token_grads.view());
+            embedding_layer.update(&table_grad, learning_rate);
         }
-        
-        // Train on negative examples
-        for sentence in &negative_sentences {
-            // Get embeddings for sentence
-            let embeddings = embedding_layer.forward_sequence(sentence);
-            // Average pooling over sequence
-            let avg_embedding = embeddings.mean_axis(ndarray::Axis(0)).unwrap();
-            
-            // Forward through classifier
-            let prediction = network.forward(avg_embedding.view());
-            let target = Array1::from_elem(1, 0.0); // Negative = 0
-            let loss = ((&prediction - &target) * (&prediction - &target)).sum();
-            total_loss += loss;
+
+        if epoch % 10 == 0 || epoch == 39 {
+            println!("Epoch {}: Loss = {:.4}", epoch + 1, total_loss);
         }
-        
-        println!("Epoch {}: Loss = {:.4}", epoch + 1, total_loss);
     }
-    
+
     // Test the classifier
     println!("\n=== Testing Classifier ===");
-    let test_sentence = vec![10, 50, 30]; // Mix of positive words
-    let embeddings = embedding_layer.forward_sequence(&test_sentence);
-    let avg_embedding = embeddings.mean_axis(ndarray::Axis(0)).unwrap();
-    let prediction = network.forward(avg_embedding.view());
-    
-    println!("Test sentence indices: {:?}", test_sentence);
-    println!("Prediction: {:.3} (>0.5 = positive, <0.5 = negative)", prediction[0]);
-    
+    for (sentence, label) in &samples {
+        let embeddings = embedding_layer.forward_sequence(sentence);
+        let pooled = embeddings.mean_axis(ndarray::Axis(0)).unwrap();
+        let prediction = network.forward(pooled.view());
+
+        println!(
+            "{:?} labelled {:.0}: predicted {:.3}",
+            sentence, label, prediction[0]
+        );
+    }
+
     // Example: Using pre-trained embeddings
     println!("\n=== Using Pre-trained Embeddings ===");
     let pretrained = ndarray::Array2::random((100, 25), ndarray_rand::rand_distr::Uniform::new(-0.1, 0.1));

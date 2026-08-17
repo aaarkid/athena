@@ -120,15 +120,10 @@ fn main() {
         }
     }
     
-    println!("\nAll checks passed");
-    println!("\nPerformance Summary:");
-    println!("- Dense layers: <1µs for small layers");
-    println!("- Full networks: ~1ms for batch=32");
-    println!("- DQN action selection: <10µs");
-    println!("- Memory efficient: Linear scaling");
-    
     #[cfg(feature = "gpu")]
-    println!("- GPU: Available (mock in WSL2)");
-    #[cfg(not(feature = "gpu"))]
-    println!("- GPU: Not compiled (use --features gpu)");
+    println!("\nGPU: compiled with the OpenCL backend");
+    #[cfg(all(feature = "gpu-mock", not(feature = "gpu")))]
+    println!("\nGPU: compiled against the mock, no OpenCL calls are made");
+    #[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
+    println!("\nGPU: not compiled, build with --features gpu or gpu-mock");
 }

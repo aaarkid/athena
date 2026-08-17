@@ -100,24 +100,18 @@ fn main() {
     
     // Training loop with validation
     println!("   Training XOR problem...");
-    for epoch in 0..100 {
-        let mut epoch_loss = 0.0;
-        
-        // Training
-        for i in 0..train_inputs.shape()[0] {
-            let input = train_inputs.row(i);
-            let target = train_targets.row(i);
-            
-            let prediction = network.forward(input);
-            let loss = ((&prediction - &target) * (&prediction - &target)).sum();
-            epoch_loss += loss;
-        }
-        
+    for epoch in 0..2000 {
+        // Whole-batch step: four samples, so a minibatch is the batch
+        network.train_minibatch(train_inputs.view(), train_targets.view(), 0.05);
+
+        let predictions = network.forward_batch(train_inputs.view());
+        let epoch_loss = (&predictions - &train_targets).mapv(|e| e * e).sum();
+
         // Track training loss
         tracker.add_metric("train_loss", epoch_loss / train_inputs.shape()[0] as f32);
         
-        // Validation every 20 epochs
-        if epoch % 20 == 0 {
+        // Validation every 400 epochs
+        if epoch % 400 == 0 {
             // Calculate validation accuracy manually
             let mut correct = 0;
             for i in 0..val_inputs.shape()[0] {

@@ -8,7 +8,7 @@
 
 use athena::network::NeuralNetwork;
 use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::optimizer::{Adam, OptimizerWrapper};
 use athena::memory_optimization::{
     GradientAccumulator, SparseLayer, ChunkedBatchProcessor, ArrayPool
 };
@@ -29,9 +29,12 @@ fn generate_data(n_samples: usize, n_features: usize) -> (Array2<f32>, Array2<f3
             inputs[[i, j]] = rng.gen_range(-1.0..1.0);
         }
         
-        // Simple nonlinear function as target
+        // Smooth nonlinear function of the input mean. The sum itself spans about
+        // +/- 17 for 100 uniform features, and sin() over that range is high-frequency
+        // noise no network of this size can fit.
         let sum: f32 = inputs.row(i).sum();
-        targets[[i, 0]] = (sum.sin() + 0.5 * sum.cos()).tanh();
+        let scaled = sum / (n_features as f32).sqrt();
+        targets[[i, 0]] = (scaled.sin() + 0.5 * scaled.cos()).tanh();
     }
     
     (inputs, targets)
@@ -53,7 +56,7 @@ fn main() {
     let mut network = NeuralNetwork::new(
         &[INPUT_SIZE, HIDDEN_SIZE, HIDDEN_SIZE, OUTPUT_SIZE],
         &[Activation::Relu, Activation::Relu, Activation::Tanh],
-        OptimizerWrapper::SGD(SGD::new())
+        OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8))
     );
     
     // Generate training data
@@ -134,40 +137,18 @@ fn main() {
             batch_loss /= batch_indices.len() as f32;
             epoch_loss += batch_loss;
             
-            // Backward pass with gradient accumulation
-            let mut all_weight_grads = vec![];
-            let mut all_bias_grads = vec![];
-            
-            for (i, (pred, target_row)) in predictions.iter().zip(batch_targets.outer_iter()).enumerate() {
-                let error = pred - &target_row.to_owned().into_shape(OUTPUT_SIZE).unwrap();
-                let input = batch_inputs.row(i);
-                
-                // Compute gradients for this sample
-                let (weight_grads, bias_grads) = network.backward_with_input(
-                    input.view(),
-                    error.view()
-                );
-                
-                if i == 0 {
-                    all_weight_grads = weight_grads;
-                    all_bias_grads = bias_grads;
-                } else {
-                    // Accumulate gradients
-                    for (j, (w_grad, b_grad)) in weight_grads.iter().zip(bias_grads.iter()).enumerate() {
-                        all_weight_grads[j] = &all_weight_grads[j] + w_grad;
-                        all_bias_grads[j] = &all_bias_grads[j] + b_grad;
-                    }
-                }
-            }
-            
-            // Scale gradients by batch size
+            // Backward pass with gradient accumulation. backward_batch reads the caches
+            // from a forward pass over the same inputs, so forward over the whole
+            // microbatch rather than reusing the chunked per-row predictions.
+            let batch_outputs = network.forward_batch(batch_inputs.view());
+            let output_errors = &batch_outputs - &batch_targets.view();
+            let gradients = network.backward_batch(output_errors.view());
+
             let scale = 1.0 / batch_indices.len() as f32;
-            for w_grad in &mut all_weight_grads {
-                *w_grad *= scale;
-            }
-            for b_grad in &mut all_bias_grads {
-                *b_grad *= scale;
-            }
+            let all_weight_grads: Vec<Array2<f32>> =
+                gradients.iter().map(|(w, _)| w * scale).collect();
+            let all_bias_grads: Vec<Array1<f32>> =
+                gradients.iter().map(|(_, b)| b * scale).collect();
             
             // Accumulate gradients
             gradient_accumulator.accumulate(&all_weight_grads, &all_bias_grads);
@@ -251,7 +232,8 @@ fn print_memory_stats(network: &NeuralNetwork, pool: &ArrayPool) {
 /// Attempt to convert dense layers to sparse representation
 fn attempt_sparsification(network: &mut NeuralNetwork) {
     println!("\nAttempting network sparsification...");
-    
+
+    let mut converted = 0;
     for (i, layer) in network.layers.iter().enumerate() {
         if let Some(sparse_layer) = SparseLayer::from_dense(layer, 1e-6) {
             let dense_memory = layer.weights.len() * std::mem::size_of::<f32>();
@@ -261,32 +243,11 @@ fn attempt_sparsification(network: &mut NeuralNetwork) {
             println!("Layer {}: Converted to sparse representation", i);
             println!("  Memory savings: {:.1}%", savings);
             println!("  Dense: {} bytes, Sparse: {} bytes", dense_memory, sparse_memory);
+            converted += 1;
         }
     }
-}
 
-// Extension trait implementation for NeuralNetwork
-trait NetworkMemoryOps {
-    fn backward_with_input(&self, input: ndarray::ArrayView1<f32>, error: ndarray::ArrayView1<f32>) 
-        -> (Vec<Array2<f32>>, Vec<Array1<f32>>);
-}
-
-impl NetworkMemoryOps for NeuralNetwork {
-    fn backward_with_input(&self, _input: ndarray::ArrayView1<f32>, _error: ndarray::ArrayView1<f32>) 
-        -> (Vec<Array2<f32>>, Vec<Array1<f32>>) 
-    {
-        // Simplified backward pass for demonstration
-        let mut weight_grads = Vec::new();
-        let mut bias_grads = Vec::new();
-        
-        // For each layer, compute approximate gradients
-        for layer in &self.layers {
-            let w_grad = Array2::zeros(layer.weights.dim());
-            let b_grad = Array1::zeros(layer.biases.len());
-            weight_grads.push(w_grad);
-            bias_grads.push(b_grad);
-        }
-        
-        (weight_grads, bias_grads)
+    if converted == 0 {
+        println!("No layer was sparse enough to be worth converting");
     }
 }
