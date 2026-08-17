@@ -8,6 +8,11 @@ use crate::network::NeuralNetwork;
 /// In f32 the finite difference is itself noisy, so treat values below roughly
 /// 1e-2 as agreement; a broken backward pass shows up as errors near 1.
 ///
+/// Keep `epsilon` at 1e-2 or above. The loss is an f32, so the difference of two
+/// losses is quantized at about `loss * 1e-7`, and dividing that by `2 * epsilon`
+/// sets a noise floor on the numerical gradient: at 1e-3 the floor is around 6e-5,
+/// which swamps any weight whose true gradient is smaller than that.
+///
 /// This is O(number of weights) forward passes, so keep it to small networks.
 pub fn gradient_check(
     network: &mut NeuralNetwork,
@@ -113,7 +118,7 @@ mod tests {
         let input = array![0.5, -0.2, 0.8];
         let target = array![1.0, -0.5];
 
-        let errors = gradient_check(&mut network, input.view(), target.view(), 1e-3);
+        let errors = gradient_check(&mut network, input.view(), target.view(), 1e-2);
 
         assert!(!errors.is_empty());
         let worst = errors.iter().copied().fold(0.0f32, f32::max);
