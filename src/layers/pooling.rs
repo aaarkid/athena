@@ -331,6 +331,31 @@ impl MaxPool1DLayer {
         self.cached_indices = Some(indices);
         output
     }
+
+    /// Backward pass: route each output gradient to the input it came from.
+    ///
+    /// Positions that won no pooling window get zero, which is correct: they had no
+    /// influence on the output.
+    pub fn backward_batch(&self, output_gradient: ArrayView3<f32>) -> Array3<f32> {
+        let indices = self.cached_indices.as_ref()
+            .expect("Forward pass must be called before backward");
+        let (batch_size, channels, in_length) = self.cached_input_shape
+            .expect("Forward pass must be called before backward");
+
+        let mut grad_input = Array3::zeros((batch_size, channels, in_length));
+        let out_length = output_gradient.shape()[2];
+
+        for b in 0..batch_size {
+            for c in 0..channels {
+                for ol in 0..out_length {
+                    let source = indices[[b, c, ol]];
+                    grad_input[[b, c, source]] += output_gradient[[b, c, ol]];
+                }
+            }
+        }
+
+        grad_input
+    }
 }
 
 #[cfg(test)]

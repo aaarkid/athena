@@ -4,9 +4,12 @@
 //! `src/tests/test_recurrent.rs`, and dense backprop through
 //! `src/debug/gradient_check.rs`. This file covers pooling and batch norm.
 
-use ndarray::{Array2, Array4};
+use ndarray::{Array2, Array3, Array4};
 
-use crate::layers::{AvgPool2DLayer, BatchNormLayer, LayerTrait, MaxPool2DLayer};
+use crate::activations::Activation;
+use crate::layers::{
+    AvgPool2DLayer, BatchNormLayer, Conv1DLayer, LayerTrait, MaxPool1DLayer, MaxPool2DLayer,
+};
 
 // f32 loss differences are quantized at about value * 1e-7, so a smaller step is noise
 const EPS: f32 = 1e-2;
@@ -237,4 +240,113 @@ fn batch_norm_backward_follows_the_branch_forward_took() {
         grad_input.iter().all(|v| v.is_finite()),
         "single-row backward produced non-finite gradients"
     );
+}
+
+#[test]
+fn conv1d_backward_matches_finite_differences() {
+    let mut layer = Conv1DLayer::new(2, 3, 3, 2, 1, Activation::Linear);
+
+    // Length 8 with kernel 3 and stride 2 leaves a tail position outside every window,
+    // which is where a gradient shaped from the output instead of the input goes wrong
+    let input = Array3::from_shape_fn((1, 2, 8), |(_, c, l)| ((c * 8 + l) as f32 * 0.29).sin());
+
+    let output = layer.forward_batch(input.view());
+    let target = Array3::from_shape_fn(output.raw_dim(), |(_, c, l)| {
+        ((c + l * 2) as f32 * 0.37).cos() * 0.5
+    });
+
+    let output_gradient = &output - &target;
+    let (grad_input, grad_kernels, grad_biases) = layer.backward_batch(output_gradient.view());
+
+    assert_eq!(grad_input.dim(), input.dim(), "input gradient shape");
+    assert_eq!(grad_kernels.dim(), layer.kernels.dim());
+    assert_eq!(grad_biases.len(), layer.out_channels);
+
+    let mut loss = |layer: &mut Conv1DLayer, input: &Array3<f32>| -> f32 {
+        let out = layer.forward_batch(input.view());
+        0.5 * (&out - &target).mapv(|v| v * v).sum()
+    };
+
+    for (oc, ic, k) in [(0usize, 0usize, 0usize), (2, 1, 2), (1, 0, 1)] {
+        let original = layer.kernels[[oc, ic, k]];
+
+        layer.kernels[[oc, ic, k]] = original + EPS;
+        let plus = loss(&mut layer, &input);
+        layer.kernels[[oc, ic, k]] = original - EPS;
+        let minus = loss(&mut layer, &input);
+        layer.kernels[[oc, ic, k]] = original;
+
+        agrees(
+            grad_kernels[[oc, ic, k]],
+            (plus - minus) / (2.0 * EPS),
+            &format!("Conv1D kernel [{}, {}, {}]", oc, ic, k),
+        );
+    }
+
+    for oc in 0..3 {
+        let original = layer.biases[oc];
+
+        layer.biases[oc] = original + EPS;
+        let plus = loss(&mut layer, &input);
+        layer.biases[oc] = original - EPS;
+        let minus = loss(&mut layer, &input);
+        layer.biases[oc] = original;
+
+        agrees(
+            grad_biases[oc],
+            (plus - minus) / (2.0 * EPS),
+            &format!("Conv1D bias [{}]", oc),
+        );
+    }
+
+    for (c, l) in [(0usize, 0usize), (1, 4), (0, 7)] {
+        let mut perturbed = input.clone();
+        perturbed[[0, c, l]] = input[[0, c, l]] + EPS;
+        let plus = loss(&mut layer, &perturbed);
+        perturbed[[0, c, l]] = input[[0, c, l]] - EPS;
+        let minus = loss(&mut layer, &perturbed);
+
+        agrees(
+            grad_input[[0, c, l]],
+            (plus - minus) / (2.0 * EPS),
+            &format!("Conv1D dx [{}, {}]", c, l),
+        );
+    }
+}
+
+#[test]
+fn max_pool_1d_routes_the_gradient_to_the_argmax() {
+    let mut layer = MaxPool1DLayer::new(2, Some(2));
+    let input = Array3::from_shape_fn((1, 2, 6), |(_, c, l)| ((c * 6 + l) as f32 * 0.43).sin());
+
+    let output = layer.forward_batch(input.view());
+    let target = Array3::from_shape_fn(output.raw_dim(), |(_, c, l)| (c + l) as f32 * 0.25);
+
+    let output_gradient = &output - &target;
+    let analytic = layer.backward_batch(output_gradient.view());
+
+    assert_eq!(analytic.dim(), input.dim());
+
+    let mut loss = |layer: &mut MaxPool1DLayer, input: &Array3<f32>| -> f32 {
+        let out = layer.forward_batch(input.view());
+        0.5 * (&out - &target).mapv(|v| v * v).sum()
+    };
+
+    for (c, l) in [(0usize, 0usize), (1, 3), (0, 5)] {
+        let mut perturbed = input.clone();
+        perturbed[[0, c, l]] = input[[0, c, l]] + EPS;
+        let plus = loss(&mut layer, &perturbed);
+        perturbed[[0, c, l]] = input[[0, c, l]] - EPS;
+        let minus = loss(&mut layer, &perturbed);
+
+        agrees(
+            analytic[[0, c, l]],
+            (plus - minus) / (2.0 * EPS),
+            &format!("MaxPool1D dx [{}, {}]", c, l),
+        );
+    }
+
+    // One input per window carries gradient
+    let nonzero = analytic.iter().filter(|v| v.abs() > 1e-9).count();
+    assert_eq!(nonzero, output.len());
 }
