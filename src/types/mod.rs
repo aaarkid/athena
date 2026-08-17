@@ -226,11 +226,53 @@ impl StateBatch {
     }
 }
 
+/// One discrete index per dimension, for `ActionSpace::MultiDiscrete`
+#[derive(Clone, Debug)]
+pub struct MultiDiscreteAction {
+    pub indices: Vec<usize>,
+}
+
+impl MultiDiscreteAction {
+    pub fn new(indices: Vec<usize>) -> Self {
+        MultiDiscreteAction { indices }
+    }
+}
+
+impl Action for MultiDiscreteAction {
+    fn to_discrete(&self) -> Option<usize> {
+        // Only meaningful when there is a single dimension
+        if self.indices.len() == 1 { Some(self.indices[0]) } else { None }
+    }
+
+    fn to_continuous(&self) -> Option<Array1<f32>> {
+        Some(Array1::from_iter(self.indices.iter().map(|&i| i as f32)))
+    }
+
+    fn is_discrete(&self) -> bool {
+        true
+    }
+}
+
+impl ActionRef for MultiDiscreteAction {
+    fn to_discrete(&self) -> Option<usize> {
+        Action::to_discrete(self)
+    }
+
+    fn to_continuous(&self) -> Option<Array1<f32>> {
+        Action::to_continuous(self)
+    }
+
+    fn is_discrete(&self) -> bool {
+        true
+    }
+}
+
 /// Concrete action type that can be boxed
 #[derive(Clone, Debug)]
 pub enum AnyAction {
     Discrete(DiscreteAction),
     Continuous(ContinuousAction),
+    MultiDiscrete(MultiDiscreteAction),
 }
 
 impl Action for AnyAction {
@@ -238,20 +280,23 @@ impl Action for AnyAction {
         match self {
             AnyAction::Discrete(a) => Action::to_discrete(a),
             AnyAction::Continuous(_) => None,
+            AnyAction::MultiDiscrete(a) => Action::to_discrete(a),
         }
     }
-    
+
     fn to_continuous(&self) -> Option<Array1<f32>> {
         match self {
             AnyAction::Discrete(_) => None,
             AnyAction::Continuous(a) => Action::to_continuous(a),
+            AnyAction::MultiDiscrete(a) => Action::to_continuous(a),
         }
     }
-    
+
     fn is_discrete(&self) -> bool {
         match self {
             AnyAction::Discrete(_) => true,
             AnyAction::Continuous(_) => false,
+            AnyAction::MultiDiscrete(_) => true,
         }
     }
 }
@@ -284,8 +329,8 @@ impl ActionSpace {
                 AnyAction::Continuous(ContinuousAction::new(values))
             }
             ActionSpace::MultiDiscrete { nvec } => {
-                // For now, just return the first action
-                AnyAction::Discrete(DiscreteAction::new(rng.gen_range(0..nvec[0])))
+                let indices = nvec.iter().map(|&n| rng.gen_range(0..n)).collect();
+                AnyAction::MultiDiscrete(MultiDiscreteAction::new(indices))
             }
         }
     }
@@ -311,10 +356,14 @@ impl ActionSpace {
                 }
             }
             ActionSpace::MultiDiscrete { nvec } => {
-                if let Some(idx) = action.to_discrete() {
-                    idx < nvec[0]
-                } else {
-                    false
+                // Multi-discrete actions come through as one float per dimension
+                match action.to_continuous() {
+                    Some(values) if values.len() == nvec.len() => {
+                        values.iter().zip(nvec.iter()).all(|(&v, &n)| {
+                            v >= 0.0 && v.fract() == 0.0 && (v as usize) < n
+                        })
+                    }
+                    _ => false,
                 }
             }
         }
@@ -415,5 +464,38 @@ mod tests {
         
         let invalid_action = ContinuousAction::from_vec(vec![2.0, 0.0]);
         assert!(!continuous_space.contains(&invalid_action));
+    }
+}
+#[cfg(test)]
+mod action_space_tests {
+    use super::*;
+
+    #[test]
+    fn multi_discrete_samples_every_dimension() {
+        let space = ActionSpace::MultiDiscrete { nvec: vec![3, 5, 2] };
+
+        for _ in 0..50 {
+            let action = space.sample();
+            match &action {
+                AnyAction::MultiDiscrete(a) => {
+                    assert_eq!(a.indices.len(), 3);
+                    assert!(a.indices[0] < 3 && a.indices[1] < 5 && a.indices[2] < 2);
+                }
+                other => panic!("expected MultiDiscrete, got {other:?}"),
+            }
+            assert!(space.contains(&MultiDiscreteAction::new(match action {
+                AnyAction::MultiDiscrete(a) => a.indices,
+                _ => unreachable!(),
+            })));
+        }
+    }
+
+    #[test]
+    fn multi_discrete_rejects_out_of_range() {
+        let space = ActionSpace::MultiDiscrete { nvec: vec![3, 5] };
+
+        assert!(!space.contains(&MultiDiscreteAction::new(vec![3, 0])));
+        assert!(!space.contains(&MultiDiscreteAction::new(vec![0])));
+        assert!(space.contains(&MultiDiscreteAction::new(vec![2, 4])));
     }
 }
