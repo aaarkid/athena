@@ -33,22 +33,37 @@ pub struct MockGpuBackend {
 
 impl MockGpuBackend {
     pub fn new() -> Self {
-        eprintln!("Warning: Using mock GPU backend. Real GPU acceleration not available.");
-        eprintln!("This is common in WSL2 environments. For real GPU support, use native Linux or Windows.");
+        eprintln!("Note: this is the mock GPU backend. Every operation runs on the CPU.");
+        eprintln!("Its timings are CPU timings and device_info below is fabricated.");
         Self {
             device_type: DeviceType::IntelGpu,
-            simulate_delay: true,
+            // Off by default: an artificial sleep makes every measurement taken
+            // against this backend meaningless. Turn it on only to exercise the
+            // code path that waits.
+            simulate_delay: false,
         }
     }
-    
+
+    /// Insert an artificial delay in every operation, scaled to the problem size.
+    ///
+    /// There is no reason to turn this on outside a test of the delay itself: it does
+    /// not model any real device, and it makes timings taken against this backend
+    /// describe nothing.
+    pub fn set_simulate_delay(&mut self, simulate: bool) {
+        self.simulate_delay = simulate;
+    }
+
+    /// A fabricated device string.
+    ///
+    /// The compute-unit, work-group and memory figures are constants in this file, not
+    /// anything queried from hardware. Nothing here describes the machine it runs on.
     pub fn device_info(&self) -> Result<String, String> {
         Ok(format!(
-            "Device: Mock Intel Arc GPU (Simulated)\n\
-             Vendor: Intel Corporation (Mock)\n\
-             Version: OpenCL 3.0 (Mock)\n\
-             Compute Units: {} (Mock)\n\
-             Max Work Group Size: {} (Mock)\n\
-             Global Memory: {} MB (Mock)",
+            "Device: none. This is the mock backend; all work runs on the CPU.\n\
+             The figures below are constants in src/gpu/mock_backend.rs, not hardware.\n\
+             Compute Units: {}\n\
+             Max Work Group Size: {}\n\
+             Global Memory: {} MB",
             MOCK_GPU_COMPUTE_UNITS,
             MOCK_GPU_MAX_WORK_GROUP_SIZE,
             MOCK_GPU_GLOBAL_MEMORY_MB

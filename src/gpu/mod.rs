@@ -1,7 +1,23 @@
 //! GPU acceleration support for Athena
-//! 
-//! This module provides GPU compute backends for accelerating neural network operations.
-//! Currently supports Intel Arc GPUs via OpenCL.
+//!
+//! Compute backends for the parts of a network that have kernels. Work goes through
+//! OpenCL: the backend picks an Intel Arc device first, then falls back to NVIDIA, AMD,
+//! or whatever else the platform reports.
+//!
+//! Matrix multiplication, elementwise addition and multiplication, and the activation
+//! functions have kernels. Everything else stays on the CPU, so a network is not moved
+//! wholesale to the device.
+//!
+//! # The two features
+//!
+//! - `gpu` compiles the OpenCL backend and needs OpenCL drivers installed.
+//! - `gpu-mock` compiles the same API with no OpenCL dependency. **Every operation runs
+//!   on the CPU.** `device_type` reports `IntelGpu` and `device_info` returns a
+//!   fabricated device string with invented compute-unit and memory figures. It exists
+//!   so the GPU API compiles and can be tested for shape on a machine with no SDK; its
+//!   timings are CPU timings and mean nothing about any device.
+//!
+//! `--all-features` does not link without OpenCL installed.
 
 pub mod constants;
 

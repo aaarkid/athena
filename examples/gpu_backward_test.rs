@@ -2,12 +2,13 @@
 //!
 //! This example verifies that the GPU backward pass produces correct gradients
 //!
-//! Run with: cargo run --example gpu_backward_test --features gpu
+//! Run with `--features gpu` for OpenCL, or `--features gpu-mock` to exercise the
+//! same API on the CPU.
 
 fn main() {
     println!("=== GPU Backward Pass Test ===\n");
 
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
     {
         match test_gpu_backward() {
             Ok(()) => println!("\nGPU backward pass test completed successfully!"),
@@ -15,11 +16,12 @@ fn main() {
         }
     }
 
-    #[cfg(not(feature = "gpu"))]
-    println!("GPU feature not enabled. Run with --features gpu");
+    #[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
+    println!("Neither GPU feature is enabled. Run with --features gpu for OpenCL,\n\
+         or --features gpu-mock to exercise the same API on the CPU.");
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn test_gpu_backward() -> Result<(), String> {
     use athena::layers::{GpuDenseLayer, DenseLayer, LayerTrait};
     use athena::activations::Activation;

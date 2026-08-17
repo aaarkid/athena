@@ -2,12 +2,14 @@
 //!
 //! This example tests basic GPU functionality to ensure it's working correctly
 //!
-//! Run with: cargo run --example gpu_test --features gpu
+//! Run with `--features gpu` for OpenCL, or `--features gpu-mock` to exercise the
+//! same API on the CPU. Under the mock every operation runs on the CPU, so its
+//! timings say nothing about any device.
 
 fn main() {
     println!("=== Simple GPU Test ===\n");
 
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
     {
         match test_gpu() {
             Ok(()) => println!("\nGPU test completed successfully!"),
@@ -15,11 +17,12 @@ fn main() {
         }
     }
 
-    #[cfg(not(feature = "gpu"))]
-    println!("GPU feature not enabled. Run with --features gpu");
+    #[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
+    println!("Neither GPU feature is enabled. Run with --features gpu for OpenCL,\n\
+         or --features gpu-mock to exercise the same API on the CPU.");
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn test_gpu() -> Result<(), String> {
     use athena::gpu::{GpuBackend, ComputeBackend};
     use ndarray::Array2;
@@ -78,6 +81,9 @@ fn test_gpu() -> Result<(), String> {
     println!("CPU time: {:.2}ms", cpu_time);
     println!("GPU time: {:.2}ms", gpu_time);
     println!("Speedup: {:.2}x", cpu_time / gpu_time);
+
+    #[cfg(all(feature = "gpu-mock", not(feature = "gpu")))]
+    println!("(both numbers above are the CPU: the mock backend does not use a device)");
 
     Ok(())
 }

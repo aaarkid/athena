@@ -46,6 +46,25 @@ proptest = "1.4"
 name = "athena"
 crate-type = ["cdylib", "rlib"]
 
+# These two use GpuOptimizedNetwork, which only exists with the OpenCL backend.
+# The other four GPU examples also build under gpu-mock, so they carry no
+# required-features: cargo has no way to express "either of these two".
+[[example]]
+name = "gpu_benchmark"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_optimized"
+required-features = ["gpu"]
+
+[[example]]
+name = "masked_cartpole"
+required-features = ["action-masking"]
+
+[[example]]
+name = "belief_tracking"
+required-features = ["belief-states"]
+
 [[bench]]
 name = "algorithm_comparison"
 harness = false
