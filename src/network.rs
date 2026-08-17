@@ -121,6 +121,42 @@ impl NeuralNetwork {
         gradients
     }
 
+    /// Gradient of the loss with respect to the network's own input.
+    ///
+    /// Needed when a network sits downstream of another one, as a critic does in
+    /// an actor-critic method: the actor's gradient has to travel back through
+    /// the critic to reach the action. `forward_batch` must have been called with
+    /// the same inputs first, since the backward pass reads the cached
+    /// pre-activations.
+    pub fn input_gradient_batch(&mut self, output_errors: ArrayView2<f32>) -> Array2<f32> {
+        let mut current_error = output_errors.to_owned();
+
+        for i in (0..self.layers.len()).rev() {
+            let layer = &mut self.layers[i];
+            let (adjusted_error, _, _) = layer.backward_batch(current_error.view());
+            current_error = adjusted_error.dot(&layer.weights.t());
+        }
+
+        current_error
+    }
+
+    /// Apply an output-error signal directly, instead of deriving it from targets.
+    ///
+    /// `train_minibatch` assumes a squared error against targets. When the error
+    /// comes from somewhere else, pass it here.
+    pub fn train_with_output_errors(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        output_errors: ArrayView2<f32>,
+        learning_rate: f32,
+    ) {
+        let outputs = self.forward_batch(inputs);
+        // train_minibatch computes outputs - targets, so this makes that difference
+        // exactly the error that was asked for
+        let targets = &outputs - &output_errors.to_owned();
+        self.train_minibatch(inputs, targets.view(), learning_rate);
+    }
+
     /// Train the neural network for a batch of input vectors and target outputs.
     /// This function updates the weights and biases of the neural network using the gradients computed
     /// by the backward_batch function and the optimizer.
