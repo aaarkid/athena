@@ -30,12 +30,11 @@ fn test_weight_initialization() {
         assert!(w >= -limit && w <= limit);
     }
     
-    // Test He normal
+    // He normal's variance is checked properly in test_metrics.rs, on a matrix large
+    // enough for the window to separate the fan_in value from the fan_out one. 200
+    // samples with a window of 0.5 around 0.2 passed for either.
     let layer = DenseLayer::new_with_init(10, 20, Activation::Relu, WeightInit::HeNormal);
-    // Check that weights have reasonable variance
-    let var: f32 = layer.weights.iter().map(|&x| x * x).sum::<f32>() / (10.0 * 20.0);
-    let expected_var = 2.0 / 10.0;
-    assert!((var - expected_var).abs() < 0.5); // Allow some variance
+    assert!(layer.weights.iter().all(|w| w.is_finite()));
 }
 
 #[test]

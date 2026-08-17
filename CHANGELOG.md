@@ -34,6 +34,10 @@ Breaking changes to the API and to the on-disk format.
 - **`MockGpuBackend` no longer inserts an artificial delay by default**, and its
   `device_info` no longer claims to be an Intel Arc. Every operation always ran on the
   CPU; the output now says so.
+- **`RunningStats::variance` divides by the count, not the count minus one.** It used to
+  report the sample variance while `Statistics::from_slice` reported the population
+  variance, so `RunningStats::to_statistics` and `Statistics::from_slice` disagreed on
+  identical data. The unbiased estimator is now `RunningStats::sample_variance`.
 - **The loss functions report a mean over samples and features.** `MSE::gradient_batch`
   was divided by the batch size while `compute_batch` was divided by `2 * batch *
   features`, so the gradient was not the derivative of the value.

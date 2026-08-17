@@ -10,6 +10,7 @@ pub mod test_layer_gradients;
 pub mod test_layers;
 pub mod test_learning;
 pub mod test_loss;
+pub mod test_metrics;
 pub mod test_network;
 pub mod test_optimizer;
 pub mod test_recurrent;

@@ -101,8 +101,26 @@ impl RunningStats {
         self.mean as f32
     }
     
-    /// Get the variance
+    /// Population variance, dividing by the count.
+    ///
+    /// The same convention as `Statistics::from_slice`, so feeding the same values
+    /// through either gives the same number. It used to divide by count - 1 here and by
+    /// count there, and `to_statistics` below then disagreed with
+    /// `Statistics::from_slice` on identical data. Use `sample_variance` for the
+    /// unbiased estimator.
     pub fn variance(&self) -> f32 {
+        if self.count == 0 {
+            0.0
+        } else {
+            (self.m2 / self.count as f64) as f32
+        }
+    }
+
+    /// Unbiased sample variance, dividing by the count minus one.
+    ///
+    /// What you want when the values are a sample drawn from a larger population rather
+    /// than the whole of it. Zero for fewer than two values.
+    pub fn sample_variance(&self) -> f32 {
         if self.count < 2 {
             0.0
         } else {
