@@ -3,15 +3,16 @@
 //! This example demonstrates:
 //! - Using SAC for continuous action spaces
 //! - Automatic temperature tuning
-//! - Experience replay with prioritization
+//! - Experience replay over continuous actions
 //! - Custom reward shaping
 //! - Advanced debugging and visualization
 
-use athena::algorithms::{SACAgent, SACBuilder};
+use athena::algorithms::{SACAgent, SACBuilder, SACExperience};
 use athena::optimizer::OptimizerWrapper;
-use athena::replay_buffer::PrioritizedReplayBuffer;
 use ndarray::{Array1, array};
 use rand::Rng;
+use rand::seq::SliceRandom;
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::fs::File;
 use std::io::Write;
@@ -156,12 +157,6 @@ struct SACConfig {
     max_steps: usize,
     eval_frequency: usize,
     save_frequency: usize,
-    
-    // Prioritized replay
-    use_per: bool,
-    per_alpha: f32,
-    per_beta_start: f32,
-    per_beta_end: f32,
 }
 
 impl Default for SACConfig {
@@ -181,10 +176,6 @@ impl Default for SACConfig {
             max_steps: 500_000,
             eval_frequency: 5_000,
             save_frequency: 50_000,
-            use_per: true,
-            per_alpha: 0.6,
-            per_beta_start: 0.4,
-            per_beta_end: 1.0,
         }
     }
 }
@@ -302,15 +293,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .auto_alpha(true)
         .build()?;
     
-    // Create replay buffer
-    let mut buffer = if config.use_per {
-        PrioritizedReplayBuffer::new(
-            config.buffer_size,
-            athena::replay_buffer::PriorityMethod::Proportional { alpha: config.per_alpha },
-        )
-    } else {
-        PrioritizedReplayBuffer::new(config.buffer_size, athena::replay_buffer::PriorityMethod::Uniform)
-    };
+    // Replay buffer. SAC needs the continuous action stored alongside the transition,
+    // so this holds SACExperience rather than the discrete-action Experience type.
+    let mut buffer: VecDeque<SACExperience> = VecDeque::with_capacity(config.batch_size);
     
     // Create environment
     let mut env = Pendulum::new();
@@ -342,17 +327,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         episode_steps += 1;
         
         // Store transition
-        let experience = athena::replay_buffer::Experience {
+        if buffer.len() == config.buffer_size {
+            buffer.pop_front();
+        }
+        buffer.push_back(SACExperience {
             state: state.clone(),
-            action: 0, // Not used for continuous actions
+            action: action.clone(),
             reward,
             next_state: next_state.clone(),
             done,
-        };
-        
-        // For continuous actions, we need to store the actual action values
-        // This is a simplified version - in practice, you'd extend the Experience struct
-        buffer.add_with_priority(experience, 1.0); // Initial priority
+        });
         
         // Update state
         state = if done {
@@ -374,24 +358,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // Training step
         if total_steps >= config.warmup_steps && buffer.len() >= config.batch_size {
-            // Sample batch
-            let beta = config.per_beta_start + 
-                      (config.per_beta_end - config.per_beta_start) * 
-                      (total_steps as f32 / config.max_steps as f32);
-            
-            let (_batch, _weights, _indices) = buffer.sample_with_weights(config.batch_size, beta);
-            
-            // Train SAC (simplified - would need proper SACExperience type)
-            // In a real implementation, you'd convert the batch to SACExperience
-            // and call agent.update(&sac_batch, learning_rate)
-            // For now, we skip the actual training
-            
-            // Log training metrics (with dummy values since we're not actually training)
+            let batch: Vec<SACExperience> = {
+                let mut rng = rand::thread_rng();
+                buffer.iter()
+                    .collect::<Vec<_>>()
+                    .choose_multiple(&mut rng, config.batch_size)
+                    .map(|e| (*e).clone())
+                    .collect()
+            };
+
+            let (critic_loss, actor_loss, _alpha_loss) =
+                agent.update(&batch, config.learning_rate_critic)?;
+
             if total_steps % 1000 == 0 {
-                let actor_loss = 0.0;  // Placeholder
-                let critic_loss = 0.0;  // Placeholder
-                let avg_q = 0.0;  // Placeholder
-                
+                let avg_q = batch.iter()
+                    .map(|e| {
+                        let (q1, q2) = agent.get_q_value(e.state.view(), e.action.view());
+                        (q1 + q2) / 2.0
+                    })
+                    .sum::<f32>() / batch.len() as f32;
+
                 logger.log_training_step(
                     total_steps,
                     actor_loss,
