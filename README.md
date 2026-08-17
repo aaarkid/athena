@@ -40,11 +40,11 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-athena = "0.2.0"
+athena = "0.3.0"
 
 # Optional features
-athena = { version = "0.2.0", features = ["gpu"] }       # GPU support through OpenCL
-athena = { version = "0.2.0", features = ["gpu-mock"] }  # GPU API without the OpenCL dependency
+athena = { version = "0.3.0", features = ["gpu"] }       # GPU support through OpenCL
+athena = { version = "0.3.0", features = ["gpu-mock"] }  # GPU API without the OpenCL dependency
 ```
 
 ### GPU support
