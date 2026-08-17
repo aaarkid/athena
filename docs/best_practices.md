@@ -15,7 +15,7 @@ This guide covers best practices for using the Athena reinforcement learning lib
 
 ### Recommended Directory Layout
 
-```
+```text
 my_rl_project/
 ├── Cargo.toml
 ├── src/

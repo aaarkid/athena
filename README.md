@@ -2,210 +2,260 @@
 
 ![Athena Logo](assets/favicon.png)
 
-Athena is a deep learning library for Rust, with a focus on reinforcement learning. It covers
-network construction and training, the common RL algorithms, and deployment through Python
-bindings and WebAssembly.
+Athena is a deep learning library for Rust, with a focus on reinforcement learning for
+games. It covers network construction and training, the common RL algorithms, and
+deployment through Python bindings and WebAssembly.
 
-## Table of Contents
+## Contents
 
 - [Features](#features)
 - [Installation](#installation)
-- [Usage](#usage)
-  - [Creating a Neural Network](#creating-a-neural-network)
-  - [Training a Neural Network](#training-a-neural-network)
-  - [Using a DQN Agent](#using-a-dqn-agent)
-  - [Replay Buffer](#replay-buffer)
-  - [Optimizers](#optimizers)
+- [Quickstart](#quickstart)
+- [What the pieces are](#what-the-pieces-are)
+- [Feature flags](#feature-flags)
 - [Documentation](#documentation)
 - [Examples](#examples)
 - [License](#license)
 
 ## Features
 
-- Customizable Neural Network architecture
-- Support for various activation functions (ReLU, Sigmoid, Tanh, etc.)
-- Layer types: Convolutional, Pooling, BatchNorm, Dropout, Embedding
-- Recurrent layers (LSTM, GRU) with backpropagation through time, trained through
-  `RecurrentNetwork`
-- Multiple RL algorithms: DQN, A2C, PPO, SAC, TD3
-- A Replay Buffer for experience replay
-- Different Optimizers (SGD, Adam, RMSProp)
-- GPU acceleration support (Intel Arc priority via OpenCL)
-- Save and load trained Neural Networks
-- Parallelism support using Rayon and ndarray
+- Dense networks with ReLU, Sigmoid, Tanh, Linear, LeakyReLU, ELU and GELU
+- Conv1D, Conv2D, pooling, batch norm, dropout and embedding layers, composed by hand
+- LSTM and GRU with backpropagation through time, trained through `RecurrentNetwork`
+- RL algorithms: DQN (with Double DQN), A2C, PPO, SAC, TD3
+- Uniform and prioritized replay buffers
+- SGD, Adam and RMSProp, with global gradient norm clipping and learning rate schedules
+- A cache-free inference path that takes `&self`, so one network serves many entities
+- Versioned save and load
+- GPU acceleration through OpenCL, plus a CPU mock for building without it
 
 ## Installation
 
-Add the following to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-athena = "0.3.0"
-
-# Optional features
-athena = { version = "0.3.0", features = ["gpu"] }       # GPU support through OpenCL
-athena = { version = "0.3.0", features = ["gpu-mock"] }  # GPU API without the OpenCL dependency
+athena = "0.4"
+ndarray = "0.15"
 ```
 
-### GPU support
+## Quickstart
 
-GPU work goes through OpenCL. The backend picks an Intel Arc device first, then falls
-back to NVIDIA, AMD, or whatever else the platform reports. Matrix multiplication,
-element-wise ops and the activation functions have kernels; everything else stays on CPU.
-
-- `gpu` needs OpenCL drivers installed
-- `gpu-mock` gives you the same API without the OpenCL dependency, which is what you
-  want for CI or for building on a machine with no SDK
-
-OpenCL on Windows is fiddly; see the [Windows Setup Guide](docs/WINDOWS_SETUP.md).
-
-## Usage
-
-### Creating a Neural Network
-
-```rust
-use athena::network::{NeuralNetwork, Activation};
-use athena::optimizer::{OptimizerWrapper, SGD};
-
-// Create a neural network with 2 layers and ReLU activation functions
-let layer_sizes = &[4, 8, 4];
-let activations = &[Activation::Relu, Activation::Linear];
-let optimizer = OptimizerWrapper::SGD(SGD::new());
-let nn = NeuralNetwork::new(layer_sizes, activations, optimizer);
+```bash
+cargo run --release --example game_loop_dqn
 ```
 
-### Training a Neural Network
+```text
+training on a 7x7 grid, 400 episodes
+episode 100  epsilon 0.221  greedy walk 12 steps
+episode 400  epsilon 0.050  greedy walk 12 steps
 
-```rust
-// Train the neural network on a minibatch of inputs and targets
-nn.train_minibatch(inputs.view(), targets.view(), learning_rate);
+trained greedy walk: Some(12) steps, shortest possible is 12
+saved to models/game_loop_dqn.bin
+reloaded greedy walk: Some(12) steps
 ```
 
-### Using a DQN Agent
+The whole path, from `examples/game_loop_dqn.rs`:
 
 ```rust
 use athena::agent::DqnAgent;
-use athena::optimizer::{OptimizerWrapper, SGD};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::replay_buffer::{Experience, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::Array1;
 
-// Create a DQN agent
-let layer_sizes = &[4, 8, 2];
-let epsilon = 0.1;
-let optimizer = OptimizerWrapper::SGD(SGD::new());
-let agent = DqnAgent::new(layer_sizes, epsilon, optimizer);
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let mut agent = DqnAgent::new(&[2, 64, 64, 4], 1.0, optimizer, 200, true);
+let mut buffer = ReplayBuffer::new(20_000);
+let mut rng = seeded_rng(11);
 
-// Train the agent on a batch of experiences
-agent.train_on_batch(&experiences, gamma, learning_rate);
+let state: Array1<f32> = Array1::zeros(2);
+let action = agent.act(state.view()).unwrap();
+
+// ... apply the action to the world ...
+let (reward, next_state, done) = (1.0, Array1::<f32>::zeros(2), false);
+
+buffer.add(Experience { state, action, reward, next_state, done });
+
+if buffer.len() >= 64 {
+    let batch = buffer.sample_with(64, &mut rng);
+    agent.train_on_batch(&batch, 0.95, 0.002).unwrap();
+}
+
+agent.decay_epsilon(0.985, 0.05);
 ```
 
-### Replay Buffer
+[`docs/quickstart.md`](docs/quickstart.md) walks through each step, including evaluation,
+saving and reloading. [`docs/conventions.md`](docs/conventions.md) has the rules that are
+not visible from a signature: shapes, the weight orientation, and what can be stacked.
+
+## What the pieces are
+
+### A neural network
 
 ```rust
-use athena::replay_buffer::{ReplayBuffer, Experience};
+use athena::activations::Activation;
+use athena::network::NeuralNetwork;
+use athena::optimizer::{OptimizerWrapper, SGD};
+use ndarray::Array2;
 
-// Create a replay buffer
-let capacity = 1000;
-let mut buffer = ReplayBuffer::new(capacity);
+let mut network = NeuralNetwork::new(
+    &[4, 8, 4],
+    &[Activation::Relu, Activation::Linear],
+    OptimizerWrapper::SGD(SGD::new()),
+);
 
-// Add experiences to the buffer
-buffer.add(experience);
+let inputs = Array2::from_shape_fn((16, 4), |(i, j)| (i + j) as f32 * 0.05);
+let targets: Array2<f32> = Array2::zeros((16, 4));
+network.train_minibatch(inputs.view(), targets.view(), 0.01);
+```
 
-// Sample a batch of experiences
-let batch_size = 32;
-let sampled_experiences = buffer.sample(batch_size);
+Inference that writes no caches, so an `Arc<NeuralNetwork>` can serve many callers:
+
+```rust
+use athena::activations::Activation;
+use athena::network::NeuralNetwork;
+use athena::optimizer::{OptimizerWrapper, SGD};
+
+let network = NeuralNetwork::new(
+    &[4, 8, 4],
+    &[Activation::Relu, Activation::Linear],
+    OptimizerWrapper::SGD(SGD::new()),
+);
+
+let state = ndarray::array![0.1, 0.2, 0.3, 0.4];
+let q_values = network.predict(state.view());
+assert_eq!(q_values.len(), 4);
 ```
 
 ### Optimizers
 
-- Stochastic Gradient Descent (SGD)
-- Adam
+`Adam::new(&[], ..)` grows its per-layer state on first use and holds no learning rate:
+the rate is an argument to each training call.
 
 ```rust
-use athena::optimizer::{OptimizerWrapper, SGD, Adam};
-use athena::network::{NeuralNetwork, Layer};
+use athena::optimizer::{Adam, OptimizerWrapper, RMSProp, SGD};
 
-// Create an optimizer
-let optimizer = OptimizerWrapper::SGD(SGD::new()); // or OptimizerWrapper::Adam(Adam::new(layers, beta1, beta2, epsilon))
+let _sgd = OptimizerWrapper::SGD(SGD::new());
+let _adam = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let _rmsprop = OptimizerWrapper::RMSProp(RMSProp::new(&[], 0.9, 1e-8));
 ```
 
-### Training an agent to play a simple game
-
-This example outlines how you would set up an agent to learn to play a simple game with Athena.
-
-Let's assume the game is very simple: The agent has two actions (move left or right), and it gets a reward of +1 if it moves right, and a reward of -1 if it moves left. The state of the game is a single number: the agent's current position.
-
-First, you would define the state and action sizes for the agent:
+### Replay buffers
 
 ```rust
-let state_size = 1; // The agent's position
-let action_size = 2; // Move left or right
-```
+use athena::replay_buffer::{Experience, PriorityMethod, PrioritizedReplayBuffer, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::array;
 
-Next, create the agent:
+let mut buffer = ReplayBuffer::new(1000);
+buffer.add(Experience {
+    state: array![0.0, 1.0],
+    action: 0,
+    reward: 1.0,
+    next_state: array![1.0, 1.0],
+    done: false,
+});
 
-```rust
-let layer_sizes = &[state_size, 64, action_size]; // Network structure
-let epsilon = 1.0; // Starting value of epsilon
-let optimizer = OptimizerWrapper::SGD(SGD::new()); // We use SGD as our optimizer
-let mut agent = DqnAgent::new(layer_sizes, epsilon, optimizer);
-```
+let mut rng = seeded_rng(3);
+let batch = buffer.sample_with(1, &mut rng);
+assert_eq!(batch.len(), 1);
 
-Now, you would play many games, allowing the agent to learn from its actions:
-
-```rust
-let mut replay_buffer = ReplayBuffer::new(10000);
-let mut state = 0.0; // Start at position 0
-let mut total_reward = 0.0;
-
-for _ in 0..10000 {
-    let action = agent.act(array![state].view()); // The agent decides on an action
-    let reward = if action == 0 { -1.0 } else { 1.0 }; // The game gives a reward
-    let next_state = state + (2 * action as f32) - 1.0; // The game updates its state
-    total_reward += reward;
-    
-    // Add this experience to the replay buffer
-    let experience = Experience {
-        state: array![state],
-        action,
-        reward,
-        next_state: array![next_state],
+// Prioritized sampling returns stable slot ids to hand back to update_priorities
+let mut prioritized =
+    PrioritizedReplayBuffer::new(1000, PriorityMethod::Proportional { alpha: 0.6 });
+prioritized.add_with_priority(
+    Experience {
+        state: array![0.0, 1.0],
+        action: 0,
+        reward: 1.0,
+        next_state: array![1.0, 1.0],
         done: false,
-    };
-    replay_buffer.add(experience);
-    
-    // Train the agent with a batch from the replay buffer
-    if replay_buffer.len() > 32 {
-        let experiences = replay_buffer.sample(32);
-        agent.train_on_batch(&experiences, 0.99, 0.001);
-    }
-    
-    // Prepare for the next game iteration
-    state = next_state;
-}
+    },
+    1.0,
+);
+let (_experiences, _weights, slots) = prioritized.sample_with_weights(1, 0.4);
+prioritized.update_priorities(&slots, &[2.0]);
 ```
 
-In this example, the agent learns to always move right in order to maximize its reward. This might seem like a trivial problem, but the process is similar for more complex games. The agent explores the game, learns from the rewards it gets, and adjusts its strategy over time.
+### Recurrent networks
+
+LSTM and GRU do not implement the `Layer` trait, so they cannot go into a
+`NeuralNetwork`. Train them through `RecurrentNetwork`:
+
+```rust
+use athena::activations::Activation;
+use athena::layers::LSTMLayer;
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::recurrent::{RecurrentCell, RecurrentNetwork};
+
+let mut model = RecurrentNetwork::new(
+    RecurrentCell::Lstm(LSTMLayer::new(3, 16, false)),
+    &[16, 1],
+    &[Activation::Linear],
+    OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)),
+);
+
+// Per frame, carrying the hidden state
+let output = model.step(ndarray::array![0.1, 0.2, 0.3].view());
+assert_eq!(output.len(), 1);
+model.reset();
+```
+
+## Feature flags
+
+| Feature | What it turns on |
+| --- | --- |
+| `gpu` | OpenCL backend. Needs OpenCL drivers installed. |
+| `gpu-mock` | The same API without OpenCL. All math runs on the CPU. |
+| `action-masking` | `MaskedLayer`, `MaskedSoftmax`, `DqnAgent::train_on_batch_masked` |
+| `belief-states` | POMDP belief states and a particle filter |
+| `multi-agent` | `SelfPlayTrainer`, communication channels |
+| `python` | PyO3 bindings |
+| `wasm` | `wasm-bindgen` bindings |
+
+`--all-features` does not link without OpenCL installed; use `--features gpu-mock` to
+compile the GPU API instead.
+
+### GPU
+
+Work goes through OpenCL. The backend picks an Intel Arc device first, then falls back to
+NVIDIA, AMD, or whatever else the platform reports. Matrix multiplication, elementwise
+ops and the activation functions have kernels; everything else stays on the CPU.
+
+Under `gpu-mock` **every operation runs on the CPU**, `device_type` reports `IntelGpu` and
+`device_info` returns a fabricated device string. It is for compiling and for API-shape
+tests; its timings mean nothing.
+
+OpenCL on Windows is fiddly; see the [Windows Setup Guide](docs/WINDOWS_SETUP.md).
 
 ## Documentation
 
-Run `cargo doc --open` for the API reference. The guides live in `docs/`:
+`cargo doc --open` for the API reference. The guides live in `docs/`:
 
-- [Getting Started](docs/tutorial_getting_started.md) - the basics
-- [Advanced Tutorial](docs/tutorial_advanced.md) - custom layers, multi-agent, performance
+- [Quickstart](docs/quickstart.md) - act, learn, save, reload
+- [Conventions](docs/conventions.md) - shapes, weight orientation, what can be stacked
+- [Getting Started](docs/tutorial_getting_started.md) - the basics at more length
 - [Algorithms Guide](docs/algorithms_guide.md) - what each algorithm is for
-- [Performance Guide](docs/performance_guide.md) - optimization tips
+- [Performance Guide](docs/performance_guide.md) - what costs what
 - [Best Practices](docs/best_practices.md) - recommended patterns
+- [Advanced Tutorial](docs/tutorial_advanced.md) - design sketches beyond the crate
 
 ## Examples
 
-Everything in `examples/` runs with `cargo run --example <name>`:
+Unless a feature is listed, `cargo run --release --example <name>`:
 
-- `grid_navigation` - DQN on a small grid world
-- `cartpole_simple` - classic control
-- `mountain_car_working` - sparse reward environment
-- `cartpole_ppo` - PPO
-- `pendulum_sac` - SAC on continuous control
-- `masked_cartpole` - action masking
-- `belief_tracking` - partially observable environment
+| Example | What it shows |
+| --- | --- |
+| `game_loop_dqn` | The canonical path: act, learn, decay, save, reload |
+| `background_training` | Training on a worker thread, off the frame thread |
+| `grid_navigation` | DQN on a small grid world |
+| `cartpole_simple` | Classic control |
+| `mountain_car_working` | Sparse reward environment |
+| `cartpole_ppo` | PPO |
+| `pendulum_sac` | SAC on continuous control |
+| `conv_shapes` | The conv and pooling backward passes |
+| `masked_cartpole` | Action masking. `--features action-masking` |
+| `belief_tracking` | Partial observability. `--features belief-states` |
+| `gpu_test` | The GPU backend. `--features gpu` or `--features gpu-mock` |
 
 ## License
 

@@ -112,11 +112,20 @@ pub mod serialization;
 
 /// The documents under `docs/`, compiled so their code samples cannot drift.
 pub mod docs {
+    #[doc = include_str!("../README.md")]
+    pub mod readme {}
+
     #[doc = include_str!("../docs/quickstart.md")]
     pub mod quickstart {}
 
     #[doc = include_str!("../docs/conventions.md")]
     pub mod conventions {}
+
+    #[doc = include_str!("../docs/algorithms_guide.md")]
+    pub mod algorithms_guide {}
+
+    #[doc = include_str!("../docs/tutorial_getting_started.md")]
+    pub mod getting_started {}
 }
 pub mod types;
 pub mod visualization;
