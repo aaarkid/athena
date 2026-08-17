@@ -432,6 +432,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Min Reward: {:.0}", eval_rewards.iter().cloned().fold(f32::INFINITY, f32::min));
     
     // Save final model
+    std::fs::create_dir_all("models")?;
     agent.save("models/cartpole_ppo_final.bin")?;
     println!("\nFinal model saved to models/cartpole_ppo_final.bin");
     

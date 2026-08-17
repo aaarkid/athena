@@ -139,7 +139,8 @@ fn main() {
             }
             
             // Select action with masking
-            let action = agent.act_masked(state.view(), &action_mask);
+            let action = agent.act_masked(state.view(), &action_mask)
+                .expect("the mask always leaves at least one action valid");
             
             // Take step
             let (next_state, reward, done) = env.step(action);
@@ -207,7 +208,8 @@ fn main() {
                 masked_count += 1;
             }
             
-            let action = agent.act_masked(state.view(), &action_mask);
+            let action = agent.act_masked(state.view(), &action_mask)
+                .expect("the mask always leaves at least one action valid");
             let (next_state, reward, _) = env.step(action);
             episode_reward += reward;
             state = next_state;

@@ -191,7 +191,7 @@ impl Conv2DLayer {
         // Compute gradients
         let kernel_gradients = self.compute_kernel_gradients(input, &grad);
         let bias_gradients = self.compute_bias_gradients(&grad);
-        let input_gradients = self.compute_input_gradients(&grad);
+        let input_gradients = self.compute_input_gradients(input, &grad);
         
         (input_gradients, kernel_gradients, bias_gradients)
     }
@@ -246,12 +246,18 @@ impl Conv2DLayer {
     }
     
     /// Compute gradients for input (transpose convolution)
-    fn compute_input_gradients(&self, grad_output: &Array4<f32>) -> Array4<f32> {
-        let (batch_size, _, out_height, out_width) = grad_output.dim();
-        let in_height = (out_height - 1) * self.stride.0 + self.kernel_size.0;
-        let in_width = (out_width - 1) * self.stride.1 + self.kernel_size.1;
-        
-        let mut grad_input_padded = Array4::zeros((batch_size, self.in_channels, in_height, in_width));
+    fn compute_input_gradients(&self, input: &Array4<f32>, grad_output: &Array4<f32>) -> Array4<f32> {
+        let (batch_size, _, in_height, in_width) = input.dim();
+        let (_, _, out_height, out_width) = grad_output.dim();
+
+        // The gradient has to match the input the forward pass saw, not the smallest
+        // input that could have produced this output. The forward pass floor-divides,
+        // so with a stride that does not divide the input evenly the last rows and
+        // columns take part in no output position and get a zero gradient.
+        let padded_height = in_height + 2 * self.padding.0;
+        let padded_width = in_width + 2 * self.padding.1;
+
+        let mut grad_input_padded = Array4::zeros((batch_size, self.in_channels, padded_height, padded_width));
         
         // Transpose convolution
         for b in 0..batch_size {
@@ -276,8 +282,8 @@ impl Conv2DLayer {
         
         // Remove padding from gradient
         if self.padding.0 > 0 || self.padding.1 > 0 {
-            let h_end = in_height - self.padding.0;
-            let w_end = in_width - self.padding.1;
+            let h_end = self.padding.0 + in_height;
+            let w_end = self.padding.1 + in_width;
             grad_input_padded.slice(s![.., .., self.padding.0..h_end, self.padding.1..w_end]).to_owned()
         } else {
             grad_input_padded
@@ -639,5 +645,108 @@ mod tests {
         assert_eq!(layer.in_channels, 3);
         assert_eq!(layer.out_channels, 64);
         assert_eq!(layer.kernel_size, (3, 3));
+    }
+
+    #[test]
+    fn conv2d_input_gradient_matches_the_input_shape() {
+        // Strides that do not divide the input evenly are where the geometry used to
+        // disagree with the forward pass
+        for &(stride, padding) in &[(1usize, 0usize), (2, 0), (2, 1), (3, 1)] {
+            let mut layer = Conv2DLayer::new(
+                1,
+                2,
+                (3, 3),
+                (stride, stride),
+                (padding, padding),
+                Activation::Relu,
+            );
+
+            let input = Array4::from_shape_fn((1, 1, 6, 6), |(_, _, h, w)| {
+                ((h * 6 + w) as f32 * 0.17).sin()
+            });
+            let output = layer.forward_batch(input.view());
+
+            let output_gradient = Array4::from_shape_fn(output.raw_dim(), |(_, c, h, w)| {
+                ((c + h * 2 + w * 3) as f32 * 0.31).cos()
+            });
+            let (input_gradient, kernel_gradient, bias_gradient) =
+                layer.backward_batch(output_gradient.view());
+
+            assert_eq!(
+                input_gradient.dim(),
+                input.dim(),
+                "stride {} padding {}: input gradient shape",
+                stride,
+                padding
+            );
+            assert_eq!(kernel_gradient.dim(), layer.kernels.dim());
+            assert_eq!(bias_gradient.len(), layer.out_channels);
+        }
+    }
+
+    #[test]
+    fn conv2d_backward_matches_finite_differences() {
+        let mut layer = Conv2DLayer::new(1, 2, (3, 3), (2, 2), (0, 0), Activation::Linear);
+
+        let input = Array4::from_shape_fn((1, 1, 6, 6), |(_, _, h, w)| {
+            ((h * 6 + w) as f32 * 0.23).sin()
+        });
+        let output = layer.forward_batch(input.view());
+        let target = Array4::from_shape_fn(output.raw_dim(), |(_, c, h, w)| {
+            ((c * 3 + h + w) as f32 * 0.41).cos() * 0.5
+        });
+
+        let output_gradient = &output - &target;
+        let (input_gradient, kernel_gradient, _) = layer.backward_batch(output_gradient.view());
+
+        let loss = |layer: &mut Conv2DLayer, input: &Array4<f32>| -> f32 {
+            let out = layer.forward_batch(input.view());
+            0.5 * (&out - &target).mapv(|v| v * v).sum()
+        };
+
+        // Large epsilon on purpose: the loss is an f32, so the difference of two losses
+        // is quantized at about loss * 1e-7 and a smaller step is all noise
+        let eps = 1e-2;
+        let tolerance = 5e-2;
+
+        for &(oc, ic, kh, kw) in &[(0usize, 0usize, 0usize, 0usize), (1, 0, 2, 1)] {
+            let original = layer.kernels[[oc, ic, kh, kw]];
+
+            layer.kernels[[oc, ic, kh, kw]] = original + eps;
+            let plus = loss(&mut layer, &input);
+            layer.kernels[[oc, ic, kh, kw]] = original - eps;
+            let minus = loss(&mut layer, &input);
+            layer.kernels[[oc, ic, kh, kw]] = original;
+
+            let numerical = (plus - minus) / (2.0 * eps);
+            let analytic = kernel_gradient[[oc, ic, kh, kw]];
+            let scale = (analytic.abs() + numerical.abs()).max(1e-3);
+            assert!(
+                (analytic - numerical).abs() / scale < tolerance,
+                "kernel [{}, {}, {}, {}]: analytic {} vs numerical {}",
+                oc, ic, kh, kw, analytic, numerical
+            );
+        }
+
+        // The last row and column take part in no output position at stride 2 over 6
+        // rows with a 3x3 kernel, so their gradient must be exactly zero
+        assert_eq!(input_gradient[[0, 0, 5, 5]], 0.0);
+
+        for &(h, w) in &[(0usize, 0usize), (2, 3)] {
+            let mut perturbed = input.clone();
+            perturbed[[0, 0, h, w]] = input[[0, 0, h, w]] + eps;
+            let plus = loss(&mut layer, &perturbed);
+            perturbed[[0, 0, h, w]] = input[[0, 0, h, w]] - eps;
+            let minus = loss(&mut layer, &perturbed);
+
+            let numerical = (plus - minus) / (2.0 * eps);
+            let analytic = input_gradient[[0, 0, h, w]];
+            let scale = (analytic.abs() + numerical.abs()).max(1e-3);
+            assert!(
+                (analytic - numerical).abs() / scale < tolerance,
+                "input [{}, {}]: analytic {} vs numerical {}",
+                h, w, analytic, numerical
+            );
+        }
     }
 }

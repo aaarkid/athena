@@ -318,12 +318,15 @@ impl PPOAgent {
                 value_loss += (value_pred - buffer.returns[i]).powi(2);
                 value_targets[[i, 0]] = buffer.returns[i];
 
-                // Entropy
+                // Entropy of this row, needed both for reporting and for the entropy
+                // gradient below
+                let mut row_entropy = 0.0;
                 for &p in probs.iter() {
                     if p > 1e-8 {
-                        entropy -= p * p.ln();
+                        row_entropy -= p * p.ln();
                     }
                 }
+                entropy += row_entropy;
 
                 // Compute PPO policy gradient with clipping
                 // Gradient of min(r*A, clip(r)*A) w.r.t. logits
@@ -338,9 +341,12 @@ impl PPOAgent {
                     let one_hot = if j == buffer.actions[i] { 1.0 } else { 0.0 };
                     // Policy gradient (negated for descent)
                     let pg = -grad_weight * ratio * (one_hot - probs[j]);
-                    // Entropy gradient
+                    // Entropy gradient. For H = -sum p ln p over softmax logits,
+                    // dH/dz_j = -p_j * (ln p_j + H), so minimizing -coeff * H gives
+                    // coeff * p_j * (ln p_j + H). The row entropy is what couples the
+                    // actions together; a constant 1 there would not sum to zero.
                     let eg = if probs[j] > 1e-8 {
-                        self.entropy_coeff * probs[j] * (1.0 + probs[j].ln())
+                        self.entropy_coeff * probs[j] * (probs[j].ln() + row_entropy)
                     } else {
                         0.0
                     };

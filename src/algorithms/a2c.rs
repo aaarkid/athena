@@ -181,8 +181,17 @@ impl A2CAgent {
         let dones: Vec<bool> = experiences.iter().map(|e| e.done).collect();
         let old_values: Vec<f32> = experiences.iter().map(|e| e.value).collect();
 
+        // The rollout is usually cut short rather than ended, so the last step's return
+        // needs V(s') to stand in for the rest of the episode
+        let last = &experiences[batch_size - 1];
+        let last_value = if last.done {
+            0.0
+        } else {
+            self.critic.forward(last.next_state.view())[0]
+        };
+
         // Compute returns and advantages
-        let (returns, advantages) = self.compute_gae(&rewards, &old_values, &dones);
+        let (returns, advantages) = self.compute_returns(&rewards, &old_values, &dones, last_value);
 
         // Normalize advantages for stable training
         let adv_mean = advantages.iter().sum::<f32>() / advantages.len() as f32;
@@ -229,12 +238,15 @@ impl A2CAgent {
             let log_prob = probs[actions[i]].ln();
             actor_loss -= log_prob * norm_advantages[i];
 
-            // Entropy for exploration bonus
+            // Entropy of this row, needed both for the reported loss and for the
+            // entropy gradient below
+            let mut row_entropy = 0.0;
             for &p in probs.iter() {
                 if p > 1e-8 {
-                    entropy -= p * p.ln();
+                    row_entropy -= p * p.ln();
                 }
             }
+            entropy += row_entropy;
 
             // Compute policy gradient: advantage * (one_hot(a) - softmax)
             // This is the gradient we want to ASCEND (maximize expected return)
@@ -243,9 +255,12 @@ impl A2CAgent {
                 let one_hot = if j == actions[i] { 1.0 } else { 0.0 };
                 // Gradient for gradient DESCENT (minimizing negative expected return)
                 // = -advantage * (one_hot - softmax)
-                // Plus entropy bonus gradient: entropy_coeff * (softmax * (1 + log(softmax)))
+                // Plus the entropy bonus gradient. For H = -sum p ln p over softmax
+                // logits, dH/dz_j = -p_j * (ln p_j + H), so minimizing -coeff * H gives
+                // coeff * p_j * (ln p_j + H). The row entropy is what couples the
+                // actions together; a constant 1 there would not sum to zero.
                 let entropy_grad = if probs[j] > 1e-8 {
-                    self.entropy_coeff * probs[j] * (1.0 + probs[j].ln())
+                    self.entropy_coeff * probs[j] * (probs[j].ln() + row_entropy)
                 } else {
                     0.0
                 };
@@ -263,25 +278,32 @@ impl A2CAgent {
         Ok((total_actor_loss, critic_loss * self.value_coeff))
     }
 
-    /// Compute Generalized Advantage Estimation (GAE)
-    fn compute_gae(
+    /// Discounted n-step returns, and the advantage as return minus value.
+    ///
+    /// This is not GAE: there is no lambda, the return is the full discounted sum to
+    /// the end of the rollout. `last_value` is V(s') for the step after the last one,
+    /// or 0.0 if the episode ended there.
+    fn compute_returns(
         &self,
         rewards: &[f32],
         values: &[f32],
         dones: &[bool],
+        last_value: f32,
     ) -> (Vec<f32>, Vec<f32>) {
         let n = rewards.len();
         let mut returns = vec![0.0; n];
         let mut advantages = vec![0.0; n];
 
-        // Compute returns using n-step returns
         for i in (0..n).rev() {
-            if i == n - 1 || dones[i] {
-                returns[i] = rewards[i];
+            let next_return = if dones[i] {
+                0.0
+            } else if i == n - 1 {
+                last_value
             } else {
-                returns[i] = rewards[i] + self.gamma * returns[i + 1];
-            }
+                returns[i + 1]
+            };
 
+            returns[i] = rewards[i] + self.gamma * next_return;
             advantages[i] = returns[i] - values[i];
         }
 
@@ -500,15 +522,17 @@ mod tests {
         let state = Array1::from_vec(vec![0.5, 0.5, 0.5, 0.5]);
         let initial_value = agent.get_value(state.view());
 
-        // Train multiple times with high rewards
+        // The last step ends the episode. Without that the return bootstraps off the
+        // value being trained and grows without bound, which says nothing about whether
+        // the critic learns.
         for _ in 0..50 {
-            let experiences: Vec<A2CExperience> = (0..10).map(|_| {
+            let experiences: Vec<A2CExperience> = (0..10).map(|step| {
                 A2CExperience {
                     state: state.clone(),
                     action: 0,
                     reward: 10.0,  // High reward
                     next_state: state.clone(),
-                    done: false,
+                    done: step == 9,
                     log_prob: -0.5,
                     value: agent.get_value(state.view()),
                 }
@@ -517,10 +541,88 @@ mod tests {
             agent.train(&experiences, 0.01).unwrap();
         }
 
+        // 10 steps of reward 10 discounted at 0.99 is 10 * (1 - 0.99^10) / 0.01
+        let target: f32 = 10.0 * (1.0 - 0.99f32.powi(10)) / 0.01;
         let final_value = agent.get_value(state.view());
-        // Value should increase toward the high return
+
         assert!(final_value > initial_value,
                 "Value should increase with high rewards. Initial: {}, Final: {}",
                 initial_value, final_value);
+        assert!(final_value > target * 0.25 && final_value < target * 2.0,
+                "Value should approach the discounted return {}, got {}",
+                target, final_value);
+    }
+
+    #[test]
+    fn truncated_rollout_bootstraps_its_last_return() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let agent = A2CAgent::new(4, 2, &[8], optimizer, 0.99, 5, 0.01, 0.5);
+
+        let rewards = [1.0f32; 5];
+        let values = [10.0f32; 5];
+        let dones = [false; 5];
+
+        let (returns, advantages) = agent.compute_returns(&rewards, &values, &dones, 10.0);
+
+        // The rollout was cut, not ended, so the last return keeps gamma * V(s')
+        let expected_last = 1.0 + 0.99 * 10.0;
+        assert!(
+            (returns[4] - expected_last).abs() < 1e-5,
+            "last return was {}, expected {}",
+            returns[4],
+            expected_last
+        );
+        assert!(
+            (advantages[4] - (expected_last - 10.0)).abs() < 1e-5,
+            "last advantage was {}",
+            advantages[4]
+        );
+
+        // Earlier steps still discount along the rollout
+        let expected_third = 1.0 + 0.99 * returns[4];
+        assert!((returns[3] - expected_third).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_terminal_step_does_not_bootstrap() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let agent = A2CAgent::new(4, 2, &[8], optimizer, 0.99, 5, 0.01, 0.5);
+
+        let rewards = [1.0f32; 3];
+        let values = [10.0f32; 3];
+        let dones = [false, true, false];
+
+        let (returns, _) = agent.compute_returns(&rewards, &values, &dones, 10.0);
+
+        assert!((returns[1] - 1.0).abs() < 1e-6, "terminal return was {}", returns[1]);
+        // Step 0 sees only the terminal step's return, not what follows it
+        assert!((returns[0] - (1.0 + 0.99)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_entropy_gradient_sums_to_zero_over_the_logits() {
+        // The entropy term is a function of the softmax outputs, so its gradient with
+        // respect to the logits has to sum to zero: shifting every logit by a constant
+        // leaves the distribution, and the entropy, unchanged
+        for probs in [
+            vec![0.25f32, 0.25, 0.25, 0.25],
+            vec![0.9, 0.05, 0.03, 0.02],
+            vec![0.5, 0.3, 0.15, 0.05],
+        ] {
+            let entropy: f32 = -probs.iter().map(|&p| p * p.ln()).sum::<f32>();
+            let coeff = 0.01;
+
+            let total: f32 = probs
+                .iter()
+                .map(|&p| coeff * p * (p.ln() + entropy))
+                .sum();
+
+            assert!(
+                total.abs() < 1e-6,
+                "entropy gradient summed to {} for {:?}",
+                total,
+                probs
+            );
+        }
     }
 }

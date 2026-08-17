@@ -88,6 +88,50 @@ impl NeuralNetwork {
         output.into_shape((output_shape,)).expect("Failed to reshape output")
     }
 
+    /// Width of the input this network accepts.
+    pub fn input_size(&self) -> usize {
+        self.layers.first().map(|l| l.weights.shape()[0]).unwrap_or(0)
+    }
+
+    /// Width of the output this network produces.
+    pub fn output_size(&self) -> usize {
+        self.layers.last().map(|l| l.weights.shape()[1]).unwrap_or(0)
+    }
+
+    /// Forward pass that reports a wrong input width instead of panicking inside ndarray.
+    ///
+    /// `forward` multiplies straight into the first layer's weights, so a state vector of
+    /// the wrong length aborts the process. Anything reading input from a game or a file
+    /// should come through here.
+    pub fn try_forward(&mut self, input: ArrayView1<f32>) -> crate::error::Result<Array1<f32>> {
+        self.check_input_width(input.len())?;
+        Ok(self.forward(input))
+    }
+
+    /// Batch form of `try_forward`.
+    pub fn try_forward_batch(&mut self, inputs: ArrayView2<f32>) -> crate::error::Result<Array2<f32>> {
+        self.check_input_width(inputs.shape()[1])?;
+        Ok(self.forward_batch(inputs))
+    }
+
+    fn check_input_width(&self, width: usize) -> crate::error::Result<()> {
+        if self.layers.is_empty() {
+            return Err(crate::error::AthenaError::TrainingError(
+                "Network has no layers".to_string(),
+            ));
+        }
+
+        let expected = self.input_size();
+        if width != expected {
+            return Err(crate::error::AthenaError::dimension_mismatch(
+                format!("input width {}", expected),
+                format!("input width {}", width),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Perform a forward pass for a batch of input vectors.
     /// This function computes the output of the neural network for each input vector in the batch
     /// by successively applying each layer's forward_batch function.
