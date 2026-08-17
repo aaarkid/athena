@@ -1,6 +1,8 @@
 use ndarray::{Array1, Array2, ArrayView1};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use rand::rngs::StdRng;
+use crate::rng::{default_rng, seeded_rng};
 
 use crate::network::NeuralNetwork;
 use crate::optimizer::OptimizerWrapper;
@@ -63,8 +65,8 @@ pub struct PPOAgent {
     /// Number of actions
     action_size: usize,
     /// Random number generator
-    #[serde(skip)]
-    pub rng: ThreadRng,
+    #[serde(skip, default = "crate::rng::default_rng")]
+    pub rng: StdRng,
 }
 
 /// Rollout buffer for storing trajectories
@@ -138,6 +140,15 @@ impl Default for PPORolloutBuffer {
 }
 
 impl PPOAgent {
+    /// Reseed this agent's generator so its randomness repeats.
+    ///
+    /// Two agents given the same seed and the same inputs follow the same sequence of
+    /// sampled actions and exploration noise. Weight initialization is separate; fix
+    /// that too when a whole run has to reproduce.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.rng = seeded_rng(seed);
+    }
+
     /// Create a new PPO agent
     pub fn new(
         state_size: usize,
@@ -184,7 +195,7 @@ impl PPOAgent {
             value_coeff: 0.5,
             max_grad_norm: Some(0.5),
             action_size,
-            rng: thread_rng(),
+            rng: default_rng(),
         }
     }
 
@@ -389,7 +400,7 @@ impl PPOAgent {
     pub fn load(path: &str) -> Result<Self> {
         let data = std::fs::read(path)?;
         let mut agent: Self = bincode::deserialize(&data)?;
-        agent.rng = thread_rng();
+        agent.rng = default_rng();
         Ok(agent)
     }
 }

@@ -33,38 +33,50 @@ pub enum WeightInit {
 impl WeightInit {
     /// Initialize weights for a layer
     pub fn initialize_weights(&self, shape: (usize, usize)) -> Array2<f32> {
+        self.initialize_weights_with(shape, &mut rand::thread_rng())
+    }
+
+    /// Initialize weights using a caller-supplied generator.
+    ///
+    /// Pass a seeded generator when the initial weights have to repeat, which is what a
+    /// reproducible training run needs on top of a seeded agent.
+    pub fn initialize_weights_with<R: rand::Rng + ?Sized>(
+        &self,
+        shape: (usize, usize),
+        rng: &mut R,
+    ) -> Array2<f32> {
         let (fan_in, fan_out) = shape;
         
         match self {
             WeightInit::XavierUniform => {
                 let limit = (6.0 / (fan_in + fan_out) as f32).sqrt();
-                Array2::random(shape, Uniform::new(-limit, limit))
+                Array2::random_using(shape, Uniform::new(-limit, limit), rng)
             }
             
             WeightInit::XavierNormal => {
                 let std = (2.0 / (fan_in + fan_out) as f32).sqrt();
                 let dist = Normal::new(0.0, std).unwrap_or(Normal::new(0.0, 0.01).expect("valid normal"));
-                Array2::random(shape, dist)
+                Array2::random_using(shape, dist, rng)
             }
             
             WeightInit::HeUniform => {
                 let limit = (6.0 / fan_in as f32).sqrt();
-                Array2::random(shape, Uniform::new(-limit, limit))
+                Array2::random_using(shape, Uniform::new(-limit, limit), rng)
             }
             
             WeightInit::HeNormal => {
                 let std = (2.0 / fan_in as f32).sqrt();
                 let dist = Normal::new(0.0, std).unwrap_or(Normal::new(0.0, 0.01).expect("valid normal"));
-                Array2::random(shape, dist)
+                Array2::random_using(shape, dist, rng)
             }
             
             WeightInit::Uniform { min, max } => {
-                Array2::random(shape, Uniform::new(*min, *max))
+                Array2::random_using(shape, Uniform::new(*min, *max), rng)
             }
             
             WeightInit::Normal { mean, std } => {
                 match Normal::new(*mean, *std) {
-                    Ok(dist) => Array2::random(shape, dist),
+                    Ok(dist) => Array2::random_using(shape, dist, rng),
                     Err(_) => Array2::zeros(shape), // Fallback to zeros if invalid parameters
                 }
             }

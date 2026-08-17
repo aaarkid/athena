@@ -3,8 +3,9 @@ use crate::activations::Activation;
 use crate::optimizer::OptimizerWrapper;
 use crate::replay_buffer::Experience;
 use crate::error::{Result, AthenaError};
-use rand::{Rng, rngs::ThreadRng};
-use ndarray::{Array2, ArrayView1};
+use rand::{Rng, rngs::StdRng};
+use crate::rng::{default_rng, seeded_rng};
+use ndarray::{Array1, Array2, ArrayView1};
 use serde::{Serialize, Deserialize};
 
 /// Enhanced Deep Q-Network (DQN) Agent with target network and Double DQN support
@@ -85,8 +86,8 @@ pub struct DqnAgent {
     pub train_steps: usize,
     
     /// Random number generator
-    #[serde(skip)]
-    pub rng: ThreadRng,
+    #[serde(skip, default = "default_rng")]
+    pub rng: StdRng,
 }
 
 impl DqnAgent {
@@ -114,7 +115,7 @@ impl DqnAgent {
         let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer.clone());
         let target_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
         
-        let rng = rand::thread_rng();
+        let rng = default_rng();
         
         DqnAgent {
             q_network,
@@ -128,6 +129,29 @@ impl DqnAgent {
         }
     }
     
+    /// Reseed this agent's generator so its randomness repeats.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.rng = seeded_rng(seed);
+    }
+
+    /// Create an agent whose randomness is reproducible.
+    ///
+    /// Two agents built with the same seed take the same exploratory actions given the
+    /// same states. Weight initialization still comes from the thread generator, so
+    /// pair this with a fixed set of weights when a run has to repeat exactly.
+    pub fn new_seeded(
+        layer_sizes: &[usize],
+        epsilon: f32,
+        optimizer: OptimizerWrapper,
+        target_update_freq: usize,
+        use_double_dqn: bool,
+        seed: u64,
+    ) -> Self {
+        let mut agent = Self::new(layer_sizes, epsilon, optimizer, target_update_freq, use_double_dqn);
+        agent.rng = seeded_rng(seed);
+        agent
+    }
+
     /// Create agent with default architecture
     pub fn new_default(
         state_size: usize, 
@@ -181,10 +205,55 @@ impl DqnAgent {
     
     /// Train the agent on a batch of experiences
     pub fn train_on_batch(
-        &mut self, 
-        experiences: &[&Experience], 
-        gamma: f32, 
-        learning_rate: f32
+        &mut self,
+        experiences: &[&Experience],
+        gamma: f32,
+        learning_rate: f32,
+    ) -> Result<f32> {
+        self.train_on_batch_inner(experiences, None, gamma, learning_rate)
+    }
+
+    /// Train on a batch where some actions are illegal in the next state.
+    ///
+    /// `next_masks[i]` says which actions are legal in `experiences[i].next_state`.
+    /// Plain `train_on_batch` maximizes over every action, including ones the agent can
+    /// never play; those entries are never corrected by experience and drift upward,
+    /// then leak into neighbouring states through the bootstrap.
+    ///
+    /// A next state with no legal action is treated as terminal.
+    pub fn train_on_batch_masked(
+        &mut self,
+        experiences: &[&Experience],
+        next_masks: &[Array1<bool>],
+        gamma: f32,
+        learning_rate: f32,
+    ) -> Result<f32> {
+        if next_masks.len() != experiences.len() {
+            return Err(AthenaError::dimension_mismatch(
+                format!("{} masks, one per experience", experiences.len()),
+                format!("{} masks", next_masks.len()),
+            ));
+        }
+
+        let num_actions = self.q_network.output_size();
+        for (i, mask) in next_masks.iter().enumerate() {
+            if mask.len() != num_actions {
+                return Err(AthenaError::dimension_mismatch(
+                    format!("mask {} of length {}", i, num_actions),
+                    format!("length {}", mask.len()),
+                ));
+            }
+        }
+
+        self.train_on_batch_inner(experiences, Some(next_masks), gamma, learning_rate)
+    }
+
+    fn train_on_batch_inner(
+        &mut self,
+        experiences: &[&Experience],
+        next_masks: Option<&[Array1<bool>]>,
+        gamma: f32,
+        learning_rate: f32,
     ) -> Result<f32> {
         if experiences.is_empty() {
             return Err(AthenaError::EmptyBuffer("No experiences to train on".to_string()));
@@ -231,6 +300,12 @@ impl DqnAgent {
         
         // Calculate target Q-values
         let mut target_q_values = current_q_values.clone();
+
+        // Whether action a is legal in the next state. Without a mask every action
+        // counts, which is what plain DQN assumes.
+        let legal = |i: usize, a: usize| -> bool {
+            next_masks.map(|masks| masks[i][a]).unwrap_or(true)
+        };
         
         if self.use_double_dqn {
             // Double DQN: use main network to select actions, target network to evaluate
@@ -243,14 +318,17 @@ impl DqnAgent {
                     let best_action = next_q_values_main.row(i)
                         .iter()
                         .enumerate()
+                        .filter(|(idx, _)| legal(i, *idx))
                         .max_by(|(_, a), (_, b)| {
                             a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                         })
-                        .map(|(idx, _)| idx)
-                        .unwrap_or(0);
-                    
-                    // Use target network to evaluate that action
-                    let target_value = rewards[i] + gamma * next_q_values_target[[i, best_action]];
+                        .map(|(idx, _)| idx);
+
+                    // A next state with no legal action is terminal in all but name
+                    let target_value = match best_action {
+                        Some(a) => rewards[i] + gamma * next_q_values_target[[i, a]],
+                        None => rewards[i],
+                    };
                     target_q_values[[i, actions[i]]] = target_value;
                 } else {
                     target_q_values[[i, actions[i]]] = rewards[i];
@@ -263,8 +341,15 @@ impl DqnAgent {
             for i in 0..batch_size {
                 if !dones[i] {
                     let max_next_q = next_q_values.row(i).iter()
-                        .fold(f32::NEG_INFINITY, |max, &val| max.max(val));
-                    let target_value = rewards[i] + gamma * max_next_q;
+                        .enumerate()
+                        .filter(|(idx, _)| legal(i, *idx))
+                        .map(|(_, &val)| val)
+                        .fold(f32::NEG_INFINITY, f32::max);
+                    let target_value = if max_next_q.is_finite() {
+                        rewards[i] + gamma * max_next_q
+                    } else {
+                        rewards[i]
+                    };
                     target_q_values[[i, actions[i]]] = target_value;
                 } else {
                     target_q_values[[i, actions[i]]] = rewards[i];
@@ -303,7 +388,7 @@ impl DqnAgent {
     pub fn load(path: &str) -> Result<Self> {
         let data = std::fs::read(path)?;
         let mut agent: Self = bincode::deserialize(&data)?;
-        agent.rng = rand::thread_rng();
+        agent.rng = default_rng();
         Ok(agent)
     }
 }
@@ -395,7 +480,7 @@ impl DqnAgentBuilder {
                 update_counter: 0,
                 use_double_dqn: self.use_double_dqn,
                 train_steps: 0,
-                rng: rand::thread_rng(),
+                rng: default_rng(),
             })
         } else {
             // Use default activations
@@ -477,5 +562,99 @@ mod tests {
     fn a_zero_target_update_frequency_is_rejected_at_construction() {
         let optimizer = OptimizerWrapper::SGD(SGD::new());
         DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 0, false);
+    }
+
+    #[test]
+    fn masked_training_does_not_bootstrap_off_an_illegal_action() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        // Plain DQN, so the bootstrap is a straight max over the target network
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        // Make action 3 look extremely good in every state, by hand
+        let out = agent.target_network.layers.last_mut().unwrap();
+        out.biases.fill(0.0);
+        out.biases[3] = 100.0;
+        out.weights.fill(0.0);
+
+        let exp = Experience {
+            state: array![0.0, 0.0],
+            action: 0,
+            reward: 1.0,
+            next_state: array![0.0, 0.0],
+            done: false,
+        };
+
+        // Actions 2 and 3 are illegal in the next state
+        let mask = array![true, true, false, false];
+
+        let masked_loss = agent
+            .train_on_batch_masked(&[&exp], std::slice::from_ref(&mask), 0.99, 0.0)
+            .unwrap();
+        let unmasked_loss = agent.train_on_batch(&[&exp], 0.99, 0.0).unwrap();
+
+        // Learning rate is zero, so the loss is purely a function of the target. The
+        // unmasked target carries 0.99 * 100 from an action the agent may never play.
+        assert!(
+            unmasked_loss > masked_loss * 10.0,
+            "masked loss {} should be far below unmasked {}",
+            masked_loss,
+            unmasked_loss
+        );
+    }
+
+    #[test]
+    fn a_next_state_with_no_legal_action_is_treated_as_terminal() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        let out = agent.target_network.layers.last_mut().unwrap();
+        out.biases.fill(50.0);
+        out.weights.fill(0.0);
+
+        let exp = Experience {
+            state: array![0.0, 0.0],
+            action: 0,
+            reward: 1.0,
+            next_state: array![0.0, 0.0],
+            done: false,
+        };
+
+        let dead_end = array![false, false, false, false];
+        let terminal = Experience { done: true, ..exp.clone() };
+
+        let dead_end_loss = agent
+            .train_on_batch_masked(&[&exp], std::slice::from_ref(&dead_end), 0.99, 0.0)
+            .unwrap();
+        let terminal_loss = agent.train_on_batch(&[&terminal], 0.99, 0.0).unwrap();
+
+        assert!(
+            (dead_end_loss - terminal_loss).abs() < 1e-3,
+            "dead end {} should match terminal {}",
+            dead_end_loss,
+            terminal_loss
+        );
+    }
+
+    #[test]
+    fn masked_training_rejects_masks_that_do_not_fit() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = DqnAgent::new(&[2, 8, 4], 0.0, optimizer, 1000, false);
+
+        let exp = Experience {
+            state: array![0.0, 0.0],
+            action: 0,
+            reward: 1.0,
+            next_state: array![0.0, 0.0],
+            done: false,
+        };
+
+        // One mask short
+        assert!(agent.train_on_batch_masked(&[&exp], &[], 0.99, 0.01).is_err());
+
+        // Mask of the wrong width
+        let narrow = array![true, true];
+        assert!(agent
+            .train_on_batch_masked(&[&exp], std::slice::from_ref(&narrow), 0.99, 0.01)
+            .is_err());
     }
 }

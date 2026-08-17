@@ -310,11 +310,15 @@ pub enum ActionSpace {
 }
 
 impl ActionSpace {
-    /// Sample a random action from the space
+    /// Sample a random action from the space, using the thread generator.
     pub fn sample(&self) -> AnyAction {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        
+        self.sample_with(&mut rand::thread_rng())
+    }
+
+    /// Sample a random action using a caller-supplied generator.
+    ///
+    /// Pass a seeded generator when the sequence has to repeat.
+    pub fn sample_with<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AnyAction {
         match self {
             ActionSpace::Discrete { n } => {
                 AnyAction::Discrete(DiscreteAction::new(rng.gen_range(0..*n)))

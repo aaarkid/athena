@@ -2,6 +2,8 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::prelude::*;
 use rand_distr::Normal;
 use serde::{Deserialize, Serialize};
+use rand::rngs::StdRng;
+use crate::rng::{default_rng, seeded_rng};
 
 use crate::network::NeuralNetwork;
 use crate::optimizer::OptimizerWrapper;
@@ -85,8 +87,8 @@ pub struct SACAgent {
     /// Action dimension
     action_size: usize,
     /// Random number generator
-    #[serde(skip)]
-    pub rng: ThreadRng,
+    #[serde(skip, default = "crate::rng::default_rng")]
+    pub rng: StdRng,
 }
 
 /// Experience for SAC (continuous actions)
@@ -100,6 +102,15 @@ pub struct SACExperience {
 }
 
 impl SACAgent {
+    /// Reseed this agent's generator so its randomness repeats.
+    ///
+    /// Two agents given the same seed and the same inputs follow the same sequence of
+    /// sampled actions and exploration noise. Weight initialization is separate; fix
+    /// that too when a whole run has to reproduce.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.rng = seeded_rng(seed);
+    }
+
     /// Create a new SAC agent
     pub fn new(
         state_size: usize,
@@ -153,7 +164,7 @@ impl SACAgent {
             gamma,
             tau,
             action_size,
-            rng: thread_rng(),
+            rng: default_rng(),
         }
     }
 
@@ -438,7 +449,7 @@ impl SACAgent {
     pub fn load(path: &str) -> Result<Self> {
         let data = std::fs::read(path)?;
         let mut agent: Self = bincode::deserialize(&data)?;
-        agent.rng = thread_rng();
+        agent.rng = default_rng();
         Ok(agent)
     }
 }

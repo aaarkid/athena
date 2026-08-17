@@ -136,7 +136,9 @@ impl SelfPlayTrainer {
                 #[cfg(feature = "action-masking")]
                 let action = {
                     let mask = env.legal_actions(agent_id);
-                    agent.act_masked(obs_array.view(), &mask)
+                    // A state with no legal action falls back to action 0, same as the
+                    // unmasked path does on error
+                    agent.act_masked(obs_array.view(), &mask).unwrap_or(0)
                 };
                 
                 #[cfg(not(feature = "action-masking"))]
@@ -255,6 +257,11 @@ impl SelfPlayTrainer {
                 
                 // Convert to references for train_on_batch
                 let exp_refs: Vec<&Experience> = batch.iter().map(|e| &**e).collect();
+                // Actions are selected under the environment's legal-action mask, but
+                // the replay buffer stores plain Experiences with no mask, so the
+                // bootstrap here maximizes over illegal actions too. Use
+                // DqnAgent::train_on_batch_masked once the buffer carries the
+                // next-state mask.
                 let _ = agent.train_on_batch(&exp_refs, 0.99, 0.001);
                 
                 // Update target network periodically

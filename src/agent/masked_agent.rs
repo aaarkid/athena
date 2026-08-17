@@ -3,7 +3,11 @@ use rand::Rng;
 use crate::agent::dqn::DqnAgent;
 use crate::error::{AthenaError, Result};
 
-/// Extension trait for agents with action masking
+/// Extension trait for agents with action masking.
+///
+/// Masking applies to action selection only. Training has to be told separately:
+/// `DqnAgent::train_on_batch` maximizes over every action when it bootstraps, so pass
+/// the next-state masks to `DqnAgent::train_on_batch_masked` instead.
 pub trait MaskedAgent {
     /// Select action with invalid actions masked out.
     ///

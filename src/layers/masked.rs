@@ -1,9 +1,14 @@
 use ndarray::{Array1, ArrayView1};
 
+use crate::error::{AthenaError, Result};
+
 /// Trait for applying action masks to outputs
 pub trait MaskedLayer {
-    /// Apply mask to output values
-    fn apply_mask(&self, output: Array1<f32>, mask: &Array1<bool>) -> Array1<f32>;
+    /// Apply mask to output values.
+    ///
+    /// Errors when the mask length does not match the output or when it leaves no
+    /// action valid, since there is no distribution over an empty set.
+    fn apply_mask(&self, output: Array1<f32>, mask: &Array1<bool>) -> Result<Array1<f32>>;
 }
 
 /// Masked softmax layer for action selection
@@ -26,52 +31,59 @@ impl MaskedSoftmax {
     }
     
     /// Apply softmax with mask
-    pub fn forward_masked(&self, input: ArrayView1<f32>, mask: Option<&Array1<bool>>) -> Array1<f32> {
+    pub fn forward_masked(
+        &self,
+        input: ArrayView1<f32>,
+        mask: Option<&Array1<bool>>,
+    ) -> Result<Array1<f32>> {
         match mask {
             Some(m) => self.apply_mask(input.to_owned(), m),
-            None => self.forward(input),
+            None => Ok(self.forward(input)),
         }
     }
 }
 
 impl MaskedLayer for MaskedSoftmax {
-    fn apply_mask(&self, input: Array1<f32>, mask: &Array1<bool>) -> Array1<f32> {
-        // Set masked actions to -inf before softmax
-        let mut masked_input = input;
-        for (i, &is_valid) in mask.iter().enumerate() {
-            if !is_valid {
-                masked_input[i] = f32::NEG_INFINITY;
-            }
+    fn apply_mask(&self, input: Array1<f32>, mask: &Array1<bool>) -> Result<Array1<f32>> {
+        if mask.len() != input.len() {
+            return Err(AthenaError::dimension_mismatch(
+                format!("mask of length {}", input.len()),
+                format!("length {}", mask.len()),
+            ));
         }
-        
-        // Apply softmax with temperature
-        let max = masked_input.iter()
+
+        // A distribution over no actions does not exist. This used to fall through to a
+        // vector of zeros under a comment promising a uniform distribution.
+        if !mask.iter().any(|&is_valid| is_valid) {
+            return Err(AthenaError::invalid_parameter(
+                "mask",
+                "no valid actions, there is no distribution to return",
+            ));
+        }
+
+        // Softmax over the valid entries only, shifted by their max for stability
+        let max = input
+            .iter()
             .enumerate()
             .filter(|(i, _)| mask[*i])
             .map(|(_, &x)| x)
             .fold(f32::NEG_INFINITY, f32::max);
-            
-        if max == f32::NEG_INFINITY {
-            // No valid actions, return uniform distribution over valid actions
-            let valid_count = mask.iter().filter(|&&x| x).count() as f32;
-            let mut result = Array1::zeros(masked_input.len());
-            for (i, &is_valid) in mask.iter().enumerate() {
-                if is_valid {
-                    result[i] = 1.0 / valid_count;
-                }
+
+        let mut result = Array1::zeros(input.len());
+        let mut sum = 0.0;
+        for (i, &is_valid) in mask.iter().enumerate() {
+            if is_valid {
+                let value = ((input[i] - max) / self.temperature).exp();
+                result[i] = value;
+                sum += value;
             }
-            result
-        } else {
-            let exp_values = masked_input.mapv(|x| {
-                if x == f32::NEG_INFINITY {
-                    0.0
-                } else {
-                    ((x - max) / self.temperature).exp()
-                }
-            });
-            let sum = exp_values.sum();
-            exp_values / sum
         }
+
+        if sum > 0.0 {
+            result /= sum;
+        }
+
+        Ok(result)
     }
 }
 
@@ -86,7 +98,7 @@ mod tests {
         let input = array![1.0, 2.0, 3.0, 4.0];
         let mask = array![true, false, true, false];
         
-        let output = layer.forward_masked(input.view(), Some(&mask));
+        let output = layer.forward_masked(input.view(), Some(&mask)).unwrap();
         
         // Check that masked actions have probability 0
         assert_eq!(output[1], 0.0);
@@ -100,15 +112,13 @@ mod tests {
     }
     
     #[test]
-    fn test_masked_softmax_no_valid_actions() {
+    fn an_all_false_mask_is_an_error() {
         let layer = MaskedSoftmax::new(1.0);
         let input = array![1.0, 2.0, 3.0];
         let mask = array![false, false, false];
         
-        let output = layer.forward_masked(input.view(), Some(&mask));
-        
-        // All outputs should be 0 when no valid actions
-        assert_eq!(output.sum(), 0.0);
+        // There is no distribution over an empty set of actions
+        assert!(layer.forward_masked(input.view(), Some(&mask)).is_err());
     }
     
     #[test]
@@ -118,8 +128,8 @@ mod tests {
         let input = array![1.0, 2.0, 3.0];
         let mask = array![true, true, true];
         
-        let output_low = layer_low_temp.forward_masked(input.view(), Some(&mask));
-        let output_high = layer_high_temp.forward_masked(input.view(), Some(&mask));
+        let output_low = layer_low_temp.forward_masked(input.view(), Some(&mask)).unwrap();
+        let output_high = layer_high_temp.forward_masked(input.view(), Some(&mask)).unwrap();
         
         // Low temperature should make distribution more peaked
         let entropy_low = -output_low.iter().map(|p| p * p.ln()).sum::<f32>();
