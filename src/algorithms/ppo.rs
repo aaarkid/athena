@@ -647,8 +647,9 @@ mod tests {
         let state = Array1::from_vec(vec![0.5, 0.5, 0.5, 0.5]);
         let initial_value = agent.get_value(state.view());
 
-        // Train multiple times with high rewards
-        for _ in 0..30 {
+        // Train repeatedly with high rewards. Enough iterations that the result does
+        // not depend on where the random initialisation happened to start.
+        for _ in 0..200 {
             let mut buffer = PPORolloutBuffer::new();
             for _ in 0..10 {
                 buffer.add(
