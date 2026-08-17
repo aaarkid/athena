@@ -272,3 +272,48 @@ fn td3_critic_learns_a_known_q_function() {
         low
     );
 }
+
+#[test]
+fn ppo_learns_to_walk_a_corridor() {
+    use crate::algorithms::{PPOAgent, PPORolloutBuffer};
+
+    let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+    let mut agent = PPOAgent::new(LENGTH, 2, &[32], optimizer, 0.95, 0.95, 0.2, 4);
+    agent.set_seed(7);
+
+    for _ in 0..120 {
+        let mut buffer = PPORolloutBuffer::new();
+        let mut position = 0;
+
+        // One rollout of fixed length, restarting the episode whenever it ends
+        for _ in 0..64 {
+            let state = corridor_state(position);
+            let (action, log_prob, value) = agent.act(state.view()).unwrap();
+            let (next_position, reward, done) = corridor_step(position, action);
+
+            buffer.states.push(state);
+            buffer.actions.push(action);
+            buffer.rewards.push(reward);
+            buffer.values.push(value);
+            buffer.log_probs.push(log_prob);
+            buffer.dones.push(done);
+
+            position = if done { 0 } else { next_position };
+        }
+
+        let last_value = agent.get_value(corridor_state(position).view());
+        agent.compute_gae(&mut buffer, last_value);
+        agent.update(&buffer, 0.003).unwrap();
+    }
+
+    // From every cell short of the end, moving right has to be the preferred action
+    for position in 0..(LENGTH - 1) {
+        let probs = agent.get_action_probs(corridor_state(position).view());
+        assert!(
+            probs[1] > probs[0],
+            "at position {} the policy preferred left: {:?}",
+            position,
+            probs
+        );
+    }
+}
