@@ -264,6 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut rollout_rewards = Vec::new();
         let mut rollout_dones = Vec::new();
         let mut rollout_values = Vec::new();
+        let mut rollout_log_probs = Vec::new();
         
         // Reset environments
         let mut states: Vec<_> = envs.iter_mut()
@@ -283,11 +284,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Get actions and values from agent
             let mut actions = Vec::new();
             let mut values = Vec::new();
+            let mut log_probs = Vec::new();
             
             for state in &normalized_states {
-                let (action, _log_prob, value) = agent.act(state.view())?;
+                // The log prob has to be the one under the policy that chose the action.
+                // PPO's ratio is exp(new_log_prob - old_log_prob); a constant here makes
+                // the ratio meaningless and the clip a no-op.
+                let (action, log_prob, value) = agent.act(state.view())?;
                 actions.push(action);
                 values.push(value);
+                log_probs.push(log_prob);
             }
             
             // Step environments
@@ -323,6 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_rewards.extend(rewards);
             rollout_dones.extend(dones);
             rollout_values.extend(values);
+            rollout_log_probs.extend(log_probs);
             
             states = next_states;
             total_steps += config.n_envs;
@@ -348,6 +355,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_dones.into_iter().map(|d| if d { 1.0 } else { 0.0 }).collect()
         );
         let values_array = Array1::from_vec(rollout_values);
+        let log_probs_array = Array1::from_vec(rollout_log_probs);
         let final_values_array = Array1::from_vec(final_values);
         
         // Update learning rate
@@ -362,7 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rollout_buffer.actions.push(actions_array[i]);
             rollout_buffer.rewards.push(rewards_array[i]);
             rollout_buffer.values.push(values_array[i]);
-            rollout_buffer.log_probs.push(0.0); // We didn't save log probs
+            rollout_buffer.log_probs.push(log_probs_array[i]);
             rollout_buffer.dones.push(dones_array[i] > 0.5);
         }
         
