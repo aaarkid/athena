@@ -27,6 +27,18 @@ impl ArrayPool {
         }
     }
     
+    /// Arrays currently held, as (1D count, 2D count), and the per-pool cap
+    pub fn stats(&self) -> (usize, usize, usize) {
+        (self.pool_1d.len(), self.pool_2d.len(), self.max_pool_size)
+    }
+
+    /// Bytes held by the pooled arrays
+    pub fn pooled_bytes(&self) -> usize {
+        let ones: usize = self.pool_1d.iter().map(|(size, _)| *size).sum();
+        let twos: usize = self.pool_2d.iter().map(|((r, c), _)| r * c).sum();
+        (ones + twos) * std::mem::size_of::<f32>()
+    }
+
     /// Get or create a 1D array
     pub fn get_array_1d(&mut self, size: usize) -> Array1<f32> {
         // Try to find a matching array in the pool

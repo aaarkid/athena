@@ -15,7 +15,9 @@ use athena::{
     layers::{DenseLayer, WeightInit},
     activations::Activation,
 };
-use ndarray::array;
+use athena::network::NeuralNetwork;
+use athena::optimizer::{OptimizerWrapper, SGD};
+use ndarray::{array, Array2};
 
 fn main() {
     println!("=== Advanced Training Features Demo ===\n");
@@ -80,16 +82,58 @@ fn main() {
     // 4. Advanced Network Architecture
     println!("4. Advanced Network Architecture");
     
-    // Create layers with different initialization strategies
-    let _dense1 = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::HeNormal);
-    let _dense2 = DenseLayer::new_with_init(64, 32, Activation::Relu, WeightInit::XavierUniform);
-    
-    println!("  Created dense layers with He and Xavier initialization");
-    println!("  Layer 1: {} -> {} with ReLU", 10, 64);
-    println!("  Layer 2: {} -> {} with ReLU", 64, 32);
-    
-    // Note: In a real implementation, you'd integrate these into a full network
-    // with batch norm and dropout layers
-    
+    // Two identical architectures, differing only in how the weights start out
+    let he = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::HeNormal);
+    let xavier = DenseLayer::new_with_init(10, 64, Activation::Relu, WeightInit::XavierUniform);
+
+    println!("  He normal spread:      {:.4}", spread(&he));
+    println!("  Xavier uniform spread: {:.4}", spread(&xavier));
+
+    // Train both on the same regression task and compare
+    println!("\n  Training both for 200 steps on the same data:");
+    let (inputs, targets) = make_regression_data(128);
+
+    for (name, init) in [("He normal", WeightInit::HeNormal), ("Xavier uniform", WeightInit::XavierUniform)] {
+        let layers = vec![
+            DenseLayer::new_with_init(10, 64, Activation::Relu, init.clone()),
+            DenseLayer::new_with_init(64, 32, Activation::Relu, init.clone()),
+            DenseLayer::new_with_init(32, 1, Activation::Linear, init),
+        ];
+        let mut network = NeuralNetwork::new_empty()
+            .with_layers(layers)
+            .with_optimizer(OptimizerWrapper::SGD(SGD::new()));
+
+        let mut loss = 0.0;
+        for _ in 0..200 {
+            network.train_minibatch(inputs.view(), targets.view(), 0.001);
+            let outputs = network.forward_batch(inputs.view());
+            loss = (&outputs - &targets).mapv(|x| x * x).mean().unwrap_or(0.0);
+        }
+
+        println!("    {name:<15} final loss {loss:.5}");
+    }
+
     println!("\n=== Demo Complete ===");
+}
+
+/// Standard deviation of a layer's weights
+fn spread(layer: &DenseLayer) -> f32 {
+    let values = &layer.weights;
+    let mean = values.mean().unwrap_or(0.0);
+    (values.mapv(|x| (x - mean).powi(2)).mean().unwrap_or(0.0)).sqrt()
+}
+
+/// A deterministic regression target: the sum of the first three inputs
+fn make_regression_data(rows: usize) -> (Array2<f32>, Array2<f32>) {
+    let mut inputs = Array2::zeros((rows, 10));
+    let mut targets = Array2::zeros((rows, 1));
+
+    for i in 0..rows {
+        for j in 0..10 {
+            inputs[[i, j]] = ((i * 10 + j) as f32 * 0.017).sin();
+        }
+        targets[[i, 0]] = inputs[[i, 0]] + inputs[[i, 1]] + inputs[[i, 2]];
+    }
+
+    (inputs, targets)
 }

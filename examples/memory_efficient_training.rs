@@ -224,7 +224,7 @@ fn main() {
 }
 
 /// Print memory usage statistics
-fn print_memory_stats(network: &NeuralNetwork, _pool: &ArrayPool) {
+fn print_memory_stats(network: &NeuralNetwork, pool: &ArrayPool) {
     let mut total_params = 0;
     let mut total_memory = 0;
     
@@ -241,10 +241,11 @@ fn print_memory_stats(network: &NeuralNetwork, _pool: &ArrayPool) {
     println!("\nMemory Statistics:");
     println!("  Total parameters: {}", total_params);
     println!("  Total memory: {:.2} MB", total_memory as f32 / 1024.0 / 1024.0);
-    println!("  Array pool stats:");
-    // Pool statistics would be available through public methods
-    // For now, just show that the pool is being used
-    println!("    Array pool is active");
+    let (held_1d, held_2d, cap) = pool.stats();
+    println!("  Array pool:");
+    println!("    1D arrays held: {held_1d} of {cap}");
+    println!("    2D arrays held: {held_2d} of {cap}");
+    println!("    Pooled memory: {:.2} KB", pool.pooled_bytes() as f32 / 1024.0);
 }
 
 /// Attempt to convert dense layers to sparse representation
