@@ -373,13 +373,37 @@ impl PPOAgent {
             total_value_loss += value_loss;
             total_entropy += entropy;
 
-            // Apply gradients to the networks
+            // Apply gradients to the networks.
+            //
+            // The policy and value networks are separate here, so there is no joint loss
+            // to weight. value_coeff scales the value network's step instead, which is
+            // the same thing the coefficient does in a shared-trunk implementation.
+            let value_lr = learning_rate * self.value_coeff;
 
-            // Train value network with returns as targets (MSE loss)
-            self.value.train_minibatch(states.view(), value_targets.view(), learning_rate);
-
-            // Train policy network with proper policy gradients
-            self.policy.train_policy_gradient(states.view(), policy_gradients.view(), learning_rate);
+            match self.max_grad_norm {
+                Some(max_norm) => {
+                    self.value.train_minibatch_clipped(
+                        states.view(),
+                        value_targets.view(),
+                        value_lr,
+                        max_norm,
+                    );
+                    self.policy.train_policy_gradient_clipped(
+                        states.view(),
+                        policy_gradients.view(),
+                        learning_rate,
+                        max_norm,
+                    );
+                }
+                None => {
+                    self.value.train_minibatch(states.view(), value_targets.view(), value_lr);
+                    self.policy.train_policy_gradient(
+                        states.view(),
+                        policy_gradients.view(),
+                        learning_rate,
+                    );
+                }
+            }
         }
 
         Ok((
@@ -670,7 +694,7 @@ mod tests {
         // Terminating makes the target a fixed 10 * sum(gamma^k, k=0..9), about 95.6.
         let expected_return: f32 = (0..10).map(|k| 0.99f32.powi(k) * 10.0).sum();
 
-        for _ in 0..100 {
+        for _ in 0..300 {
             let mut buffer = PPORolloutBuffer::new();
             for step in 0..10 {
                 buffer.add(
@@ -683,7 +707,7 @@ mod tests {
                 );
             }
             agent.compute_gae(&mut buffer, 0.0);
-            agent.update(&buffer, 0.01).unwrap();
+            agent.update(&buffer, 0.05).unwrap();
         }
 
         let final_value = agent.get_value(state.view());

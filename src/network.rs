@@ -211,6 +211,76 @@ impl NeuralNetwork {
         self.train_minibatch(inputs, targets.view(), learning_rate);
     }
 
+    /// Scale a set of gradients so their combined L2 norm is at most `max_norm`.
+    ///
+    /// Applied across all layers at once, which is what "global gradient norm" means; a
+    /// per-layer clip would change the direction of the update, not just its length.
+    /// Returns the norm before clipping, which is worth logging when training diverges.
+    fn clip_gradient_norm(
+        gradients: &mut [(Array2<f32>, Array1<f32>)],
+        max_norm: f32,
+    ) -> f32 {
+        let squared: f32 = gradients
+            .iter()
+            .map(|(w, b)| w.iter().chain(b.iter()).map(|v| v * v).sum::<f32>())
+            .sum();
+        let norm = squared.sqrt();
+
+        if norm.is_finite() && norm > max_norm && max_norm > 0.0 {
+            let scale = max_norm / norm;
+            for (w, b) in gradients.iter_mut() {
+                *w *= scale;
+                *b *= scale;
+            }
+        }
+
+        norm
+    }
+
+    fn apply_gradients(&mut self, gradients: Vec<(Array2<f32>, Array1<f32>)>, learning_rate: f32) {
+        for (idx, (layer, (weight_gradients, bias_gradients))) in
+            self.layers.iter_mut().zip(gradients).enumerate()
+        {
+            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
+            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
+        }
+    }
+
+    /// `train_minibatch` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn train_minibatch_clipped(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        targets: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let outputs = self.forward_batch(inputs);
+        let output_errors = &outputs - &targets;
+        let mut gradients = self.backward_batch(output_errors.view());
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
+    }
+
+    /// `train_policy_gradient` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn train_policy_gradient_clipped(
+        &mut self,
+        inputs: ArrayView2<f32>,
+        output_gradients: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let _ = self.forward_batch(inputs);
+        let mut gradients = self.backward_batch(output_gradients);
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
+    }
+
     /// Train the neural network for a batch of input vectors and target outputs.
     /// This function updates the weights and biases of the neural network using the gradients computed
     /// by the backward_batch function and the optimizer.
