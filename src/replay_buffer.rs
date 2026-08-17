@@ -92,12 +92,18 @@ impl ReplayBuffer {
         self.buffer.push_back(experience);
     }
 
+    /// Sample a batch, using the thread generator.
     pub fn sample(&self, batch_size: usize) -> Vec<&Experience> {
-        let mut rng = thread_rng();
-    
+        self.sample_with(batch_size, &mut thread_rng())
+    }
+
+    /// Sample a batch using a caller-supplied generator.
+    ///
+    /// Pass a seeded generator when a training run has to repeat.
+    pub fn sample_with<R: Rng + ?Sized>(&self, batch_size: usize, rng: &mut R) -> Vec<&Experience> {
         let (slice1, slice2) = self.buffer.as_slices();
         let mut indices = (0..self.buffer.len()).collect::<Vec<usize>>();
-        indices.shuffle(&mut rng);
+        indices.shuffle(rng);
     
         if batch_size > indices.len() {
             // Not enough samples in the buffer yet, return all of them:

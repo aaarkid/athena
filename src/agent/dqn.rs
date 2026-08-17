@@ -3,7 +3,8 @@ use crate::activations::Activation;
 use crate::optimizer::OptimizerWrapper;
 use crate::replay_buffer::Experience;
 use crate::error::{Result, AthenaError};
-use rand::{Rng, rngs::ThreadRng};
+use rand::{Rng, rngs::StdRng};
+use crate::rng::{default_rng, seeded_rng};
 use ndarray::{Array1, Array2, ArrayView1};
 use serde::{Serialize, Deserialize};
 
@@ -85,8 +86,8 @@ pub struct DqnAgent {
     pub train_steps: usize,
     
     /// Random number generator
-    #[serde(skip)]
-    pub rng: ThreadRng,
+    #[serde(skip, default = "default_rng")]
+    pub rng: StdRng,
 }
 
 impl DqnAgent {
@@ -114,7 +115,7 @@ impl DqnAgent {
         let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer.clone());
         let target_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
         
-        let rng = rand::thread_rng();
+        let rng = default_rng();
         
         DqnAgent {
             q_network,
@@ -128,6 +129,29 @@ impl DqnAgent {
         }
     }
     
+    /// Reseed this agent's generator so its randomness repeats.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.rng = seeded_rng(seed);
+    }
+
+    /// Create an agent whose randomness is reproducible.
+    ///
+    /// Two agents built with the same seed take the same exploratory actions given the
+    /// same states. Weight initialization still comes from the thread generator, so
+    /// pair this with a fixed set of weights when a run has to repeat exactly.
+    pub fn new_seeded(
+        layer_sizes: &[usize],
+        epsilon: f32,
+        optimizer: OptimizerWrapper,
+        target_update_freq: usize,
+        use_double_dqn: bool,
+        seed: u64,
+    ) -> Self {
+        let mut agent = Self::new(layer_sizes, epsilon, optimizer, target_update_freq, use_double_dqn);
+        agent.rng = seeded_rng(seed);
+        agent
+    }
+
     /// Create agent with default architecture
     pub fn new_default(
         state_size: usize, 
@@ -364,7 +388,7 @@ impl DqnAgent {
     pub fn load(path: &str) -> Result<Self> {
         let data = std::fs::read(path)?;
         let mut agent: Self = bincode::deserialize(&data)?;
-        agent.rng = rand::thread_rng();
+        agent.rng = default_rng();
         Ok(agent)
     }
 }
@@ -456,7 +480,7 @@ impl DqnAgentBuilder {
                 update_counter: 0,
                 use_double_dqn: self.use_double_dqn,
                 train_steps: 0,
-                rng: rand::thread_rng(),
+                rng: default_rng(),
             })
         } else {
             // Use default activations

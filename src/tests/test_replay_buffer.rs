@@ -193,21 +193,28 @@ fn test_prioritized_replay_buffer_importance_weights() {
         buffer.add_with_priority(exp, (i + 1) as f32);
     }
     
-    // Sample with beta < 1
-    let (_, weights, _) = buffer.sample_with_weights(5, 0.4);
-    
-    // Importance weights should vary
-    let min_weight = weights.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    let max_weight = weights.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    assert!(max_weight > min_weight);
-    
-    // Sample with beta = 1 (full correction)
-    let (_, weights, _) = buffer.sample_with_weights(5, 1.0);
-    
-    // Weights should still vary but be more extreme
-    let min_weight2 = weights.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    let max_weight2 = weights.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-    assert!(max_weight2 > min_weight2);
+    // Sampling is with replacement, so a batch of 5 can legitimately draw one index
+    // five times and produce five equal weights. Draw enough that every priority is
+    // represented; the five priorities differ, so the weights have to differ too.
+    let spread = |beta: f32| -> f32 {
+        let (_, weights, _) = buffer.sample_with_weights(200, beta);
+        assert!(weights.iter().all(|w| w.is_finite() && *w > 0.0));
+
+        let min = weights.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        assert!(max > min, "importance weights did not vary at beta {}", beta);
+        max / min
+    };
+
+    // Beta is the exponent on the correction, so raising it widens the spread
+    let partial = spread(0.4);
+    let full = spread(1.0);
+    assert!(
+        full > partial,
+        "beta 1.0 spread {} should exceed beta 0.4 spread {}",
+        full,
+        partial
+    );
 }
 
 #[test]

@@ -136,7 +136,9 @@ impl SelfPlayTrainer {
                 #[cfg(feature = "action-masking")]
                 let action = {
                     let mask = env.legal_actions(agent_id);
-                    agent.act_masked(obs_array.view(), &mask)
+                    // A state with no legal action falls back to action 0, same as the
+                    // unmasked path does on error
+                    agent.act_masked(obs_array.view(), &mask).unwrap_or(0)
                 };
                 
                 #[cfg(not(feature = "action-masking"))]
