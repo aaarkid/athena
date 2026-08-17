@@ -1,10 +1,10 @@
 # Athena Documentation
 
-Welcome to the Athena deep learning library documentation.
+Documentation for Athena, a deep learning library for Rust with a focus on reinforcement learning.
 
 ## Getting Started
 - [Tutorial: Getting Started](tutorial_getting_started.md) - Basic usage and first steps
-- [Tutorial: Advanced Features](tutorial_advanced.md) - Deep dive into advanced capabilities
+- [Tutorial: Advanced Features](tutorial_advanced.md) - custom layers, multi-agent, performance
 
 ## Guides
 - [Algorithms Guide](algorithms_guide.md) - Overview of RL algorithms (DQN, PPO, SAC, etc.)
@@ -32,7 +32,4 @@ See the `examples/` directory for working code samples:
 - And many more...
 
 ## Development
-For contributing and future development plans, see:
-- [ADVANCED_FEATURES_PLAN.md](../ADVANCED_FEATURES_PLAN.md) - Roadmap for research features
-- [FUTURE_ENHANCEMENTS.md](../FUTURE_ENHANCEMENTS.md) - Planned enhancements
-- [IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md) - Current implementation status
+Build with `cargo build`, test with `cargo test`, lint with `cargo clippy`.

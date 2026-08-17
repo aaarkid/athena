@@ -2,7 +2,7 @@
 
 ## Accessing Documentation
 
-The primary documentation for Athena is now integrated into Rust's documentation system.
+The API documentation lives in Rust's own documentation system.
 
 ### View Documentation
 
@@ -19,7 +19,7 @@ cargo doc --no-deps --open
 
 ### Documentation Structure
 
-Once you run `cargo doc --open`, you'll see:
+`cargo doc --open` gives you:
 
 1. **Main Page** - Overview and documentation hub with links
 2. **Modules Section** - Click to expand and see all modules
@@ -37,6 +37,7 @@ Once you run `cargo doc --open`, you'll see:
 3. Click on struct/trait names for detailed documentation
 4. Look for "Examples" sections in each item
 
-### Legacy Markdown Files
+### Markdown guides
 
-The original markdown documentation files in this directory are preserved for reference but have been integrated into the Rust documentation system for better accessibility.
+The guides in this directory (tutorials, algorithms, performance, best practices)
+are also available as modules under `athena::tutorials` in the generated docs.

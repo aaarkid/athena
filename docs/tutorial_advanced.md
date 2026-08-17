@@ -1,6 +1,6 @@
 # Advanced Athena Tutorial
 
-This tutorial covers advanced topics for experienced users who want to push the boundaries of what's possible with Athena.
+This tutorial covers the advanced parts of the library: custom environments, multi-agent setups, custom architectures and the training techniques that go with them.
 
 ## Table of Contents
 
@@ -1092,13 +1092,8 @@ impl CQLAgent {
 
 ## Conclusion
 
-These advanced techniques demonstrate the flexibility and power of Athena for cutting-edge RL research and applications. Key takeaways:
+The pieces above compose: custom layers and environments plug into the same training
+loops as the built-in ones, and the performance notes apply regardless of which
+algorithm you picked.
 
-1. **Modularity**: Build complex systems from simple components
-2. **Extensibility**: Create custom layers, environments, and algorithms
-3. **Performance**: Optimize critical paths with SIMD and caching
-4. **Research**: Implement state-of-the-art algorithms easily
-
-For more examples and research papers implemented in Athena, visit our [GitHub repository](https://github.com/athena-rl/papers).
-
-Happy researching!
+For runnable versions of most of this, see the `examples/` directory.

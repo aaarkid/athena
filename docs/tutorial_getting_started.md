@@ -440,18 +440,19 @@ Now that you understand the basics, try:
 
 ### Resources
 
-- [API Documentation](../api/index.html)
+- API documentation: run `cargo doc --open`
 - [Examples](../examples/)
 - [Algorithm Guide](algorithms_guide.md)
 - [Performance Guide](performance_guide.md)
 - [Best Practices](best_practices.md)
 
-### Example Projects
+### Examples in this repository
 
-1. **CartPole Balance**: Classic control problem
-2. **Mountain Car**: Sparse reward environment
-3. **Lunar Lander**: Continuous control
-4. **Atari Games**: High-dimensional observations
-5. **Robot Control**: Real-world applications
+- `grid_navigation.rs` - DQN on a small grid world
+- `cartpole_simple.rs` - classic control
+- `mountain_car_working.rs` - sparse reward environment
+- `cartpole_ppo.rs` - PPO
+- `pendulum_sac.rs` - SAC on continuous control
+- `masked_cartpole.rs` - action masking
 
-Happy learning with Athena!
+Run any of them with `cargo run --example <name>`.
