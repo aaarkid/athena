@@ -439,15 +439,15 @@ impl DqnAgent {
     
     /// Save the agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
     
     /// Load agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
+        agent.q_network.validate()?;
+        agent.target_network.validate()?;
+        // The generator is not serialized, so a loaded agent explores from a fresh one
         agent.rng = default_rng();
         Ok(agent)
     }

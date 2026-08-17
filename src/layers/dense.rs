@@ -13,7 +13,11 @@ pub struct DenseLayer {
     pub weights: Array2<f32>,
     pub biases: Array1<f32>,
     pub activation: Activation,
+    // Written by forward_batch for backward_batch to read. Skipped on the wire: they
+    // are as large as the batch that wrote them and hold fragments of the training data.
+    #[serde(skip)]
     pre_activation_output: Option<Array2<f32>>,
+    #[serde(skip)]
     inputs: Option<Array2<f32>>,
 }
 

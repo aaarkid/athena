@@ -140,32 +140,177 @@ fn test_train_steps_tracking() {
 
 #[test]
 fn test_agent_save_load() {
+    use crate::optimizer::Adam;
+    use ndarray::Array1;
     use std::fs;
-    
-    let agent = DqnAgentBuilder::new()
+
+    let mut agent = DqnAgentBuilder::new()
         .layer_sizes(&[2, 4, 2])
         .epsilon(0.25)
-        .optimizer(OptimizerWrapper::SGD(SGD::new()))
+        .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
         .target_update_freq(150)
         .use_double_dqn(true)
         .build()
         .unwrap();
-    
-    // Save agent
+
+    // Train first: an untrained agent's weights would round-trip even if the file were
+    // saving something unrelated to what training changes
+    let experiences: Vec<Experience> = (0..8)
+        .map(|i| Experience {
+            state: array![i as f32 * 0.1, 1.0 - i as f32 * 0.1],
+            action: i % 2,
+            reward: if i % 2 == 0 { 1.0 } else { -1.0 },
+            next_state: array![0.5, 0.5],
+            done: i % 4 == 0,
+        })
+        .collect();
+    for _ in 0..200 {
+        let batch: Vec<&Experience> = experiences.iter().collect();
+        agent.train_on_batch(&batch, 0.99, 1e-3).unwrap();
+    }
+
     let path = "test_agent.bin";
     agent.save(path).unwrap();
-    
-    // Load agent
     let loaded_agent = DqnAgent::load(path).unwrap();
-    
-    // Verify properties
+
     assert_eq!(loaded_agent.epsilon, 0.25);
     assert_eq!(loaded_agent.target_update_freq, 150);
     assert!(loaded_agent.use_double_dqn);
-    assert_eq!(loaded_agent.train_steps, 0);
-    
-    // Cleanup
+    assert_eq!(loaded_agent.train_steps, agent.train_steps);
+    assert_eq!(agent.train_steps, 200);
+
+    // Every parameter of both networks, bit for bit
+    for (name, original, loaded) in [
+        ("q", &agent.q_network, &loaded_agent.q_network),
+        ("target", &agent.target_network, &loaded_agent.target_network),
+    ] {
+        assert_eq!(original.layers.len(), loaded.layers.len());
+        for (i, (a, b)) in original.layers.iter().zip(loaded.layers.iter()).enumerate() {
+            assert_eq!(a.weights, b.weights, "{} network layer {} weights", name, i);
+            assert_eq!(a.biases, b.biases, "{} network layer {} biases", name, i);
+        }
+    }
+
+    // And the same numbers out of it
+    let probe = Array1::from_vec(vec![0.3, -0.7]);
+    assert_eq!(
+        agent.q_network.predict(probe.view()),
+        loaded_agent.q_network.predict(probe.view())
+    );
+
     fs::remove_file(path).ok();
+}
+
+#[test]
+fn adam_state_survives_a_round_trip() {
+    use crate::optimizer::Adam;
+    use std::fs;
+
+    let mut agent = DqnAgent::new(
+        &[2, 8, 2],
+        0.0,
+        OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)),
+        1_000_000,
+        false,
+    );
+
+    let experiences: Vec<Experience> = (0..8)
+        .map(|i| Experience {
+            state: array![i as f32 * 0.1, 1.0],
+            action: i % 2,
+            reward: 0.5,
+            next_state: array![0.2, 0.4],
+            done: true,
+        })
+        .collect();
+    for _ in 0..50 {
+        let batch: Vec<&Experience> = experiences.iter().collect();
+        agent.train_on_batch(&batch, 0.99, 1e-3).unwrap();
+    }
+
+    let path = "test_agent_adam.bin";
+    agent.save(path).unwrap();
+    let mut loaded = DqnAgent::load(path).unwrap();
+    fs::remove_file(path).ok();
+
+    // One more identical step. Adam's moment estimates decide the step size, so if they
+    // had not come across the two networks would separate here.
+    let batch: Vec<&Experience> = experiences.iter().collect();
+    agent.train_on_batch(&batch, 0.99, 1e-3).unwrap();
+    loaded.train_on_batch(&batch, 0.99, 1e-3).unwrap();
+
+    for (i, (a, b)) in agent
+        .q_network
+        .layers
+        .iter()
+        .zip(loaded.q_network.layers.iter())
+        .enumerate()
+    {
+        for (x, y) in a.weights.iter().zip(b.weights.iter()) {
+            assert!(
+                (x - y).abs() < 1e-9,
+                "layer {} diverged after one more step: {} vs {}",
+                i,
+                x,
+                y
+            );
+        }
+    }
+}
+
+#[test]
+fn a_truncated_or_foreign_file_is_reported_rather_than_decoded() {
+    use std::fs;
+
+    let agent = DqnAgent::new(&[2, 4, 2], 0.1, OptimizerWrapper::SGD(SGD::new()), 100, false);
+    let path = "test_agent_truncated.bin";
+    agent.save(path).unwrap();
+
+    let whole = fs::read(path).unwrap();
+    assert!(whole.len() > 32);
+
+    fs::write(path, &whole[..whole.len() / 2]).unwrap();
+    assert!(DqnAgent::load(path).is_err(), "a truncated file loaded");
+
+    // Right length, wrong magic
+    let mut foreign = whole.clone();
+    foreign[0] = b'X';
+    fs::write(path, &foreign).unwrap();
+    assert!(DqnAgent::load(path).is_err(), "a file with the wrong magic loaded");
+
+    // Right magic, unknown version
+    let mut future = whole.clone();
+    future[4] = 99;
+    fs::write(path, &future).unwrap();
+    assert!(DqnAgent::load(path).is_err(), "an unknown format version loaded");
+
+    fs::remove_file(path).ok();
+}
+
+#[test]
+fn a_saved_network_does_not_carry_the_forward_pass_caches() {
+    use crate::network::NeuralNetwork;
+    use crate::activations::Activation;
+    use ndarray::Array2;
+
+    let mut net = NeuralNetwork::new(
+        &[4, 128, 64, 2],
+        &[Activation::Relu, Activation::Relu, Activation::Linear],
+        OptimizerWrapper::SGD(SGD::new()),
+    );
+
+    let untouched = crate::serialization::encode(&net).unwrap().len();
+
+    // A batch of 32 through this shape caches more floats than the network has weights
+    let inputs = Array2::from_shape_fn((32, 4), |(i, j)| (i + j) as f32 * 0.01);
+    let _ = net.forward_batch(inputs.view());
+
+    let after_a_batch = crate::serialization::encode(&net).unwrap().len();
+    assert_eq!(
+        untouched, after_a_batch,
+        "the file grew by {} bytes after a forward pass",
+        after_a_batch as i64 - untouched as i64
+    );
 }
 
 #[test]

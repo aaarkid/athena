@@ -29,9 +29,6 @@
 
 use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2, Zip};
 use serde::{Serialize, Deserialize};
-use std::fs;
-use std::io::{Read, Write};
-use bincode::{serialize, deserialize};
 
 use crate::optimizer::{Optimizer, OptimizerWrapper};
 use crate::layers::{Layer, LayerTrait};
@@ -509,20 +506,60 @@ impl NeuralNetwork {
     /// This function serializes the neural network, including its layers and optimizer, and writes
     /// the serialized data to a file at the specified path.
     pub fn save(&self, path: &str) -> crate::error::Result<()> {
-        let serialized = serialize(self)?;
-        let mut file = fs::File::create(path)?;
-        file.write_all(&serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load a neural network from a file.
     /// This function reads the serialized data from a file at the specified path, deserializes it,
     /// and constructs a new neural network with the loaded state.
     pub fn load(path: &str) -> crate::error::Result<Self> {
-        let mut file = fs::File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        let deserialized: Self = deserialize(&buffer)?;
-        Ok(deserialized)
+        let network: Self = crate::serialization::load_from_file(path)?;
+        network.validate()?;
+        Ok(network)
+    }
+
+    /// Check that this network could have been built by `new`.
+    ///
+    /// A loaded file is untrusted input: a layer whose bias length disagrees with its
+    /// weight matrix, or a layer whose input width does not match the previous layer's
+    /// output, would panic inside ndarray on the first forward pass instead of here.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if self.layers.is_empty() {
+            return Err(crate::error::AthenaError::SerializationError(
+                "network has no layers".to_string(),
+            ));
+        }
+
+        for (i, layer) in self.layers.iter().enumerate() {
+            let (input_width, output_width) = layer.weights.dim();
+            if input_width == 0 || output_width == 0 {
+                return Err(crate::error::AthenaError::SerializationError(format!(
+                    "layer {} has a {} by {} weight matrix",
+                    i, input_width, output_width
+                )));
+            }
+            if layer.biases.len() != output_width {
+                return Err(crate::error::AthenaError::SerializationError(format!(
+                    "layer {} has {} outputs but {} biases",
+                    i,
+                    output_width,
+                    layer.biases.len()
+                )));
+            }
+            if i > 0 {
+                let previous = self.layers[i - 1].weights.dim().1;
+                if input_width != previous {
+                    return Err(crate::error::AthenaError::SerializationError(format!(
+                        "layer {} takes {} inputs but layer {} produces {}",
+                        i,
+                        input_width,
+                        i - 1,
+                        previous
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 }

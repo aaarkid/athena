@@ -34,9 +34,15 @@ pub struct BatchNormLayer {
     pub training: bool,
     
     /// Cached values for backward pass
+    // Written by the forward pass for the backward pass to read, and skipped on the
+    // wire: they are as large as the batch that wrote them.
+    #[serde(skip)]
     cached_normalized: Option<Array2<f32>>,
+    #[serde(skip)]
     cached_std: Option<Array1<f32>>,
+    #[serde(skip)]
     cached_mean: Option<Array1<f32>>,
+    #[serde(skip)]
     cached_inputs: Option<Array2<f32>>,
 
     /// Whether the last forward pass used batch statistics.
@@ -44,6 +50,7 @@ pub struct BatchNormLayer {
     /// Forward falls back to the running statistics for a batch of one even in training
     /// mode, since a single sample has no variance. Backward has to take the same branch
     /// or it reads caches that pass never wrote.
+    #[serde(skip)]
     cached_used_batch_stats: bool,
 }
 

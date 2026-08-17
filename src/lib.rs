@@ -89,6 +89,7 @@ pub mod optimizer;
 pub mod recurrent;
 pub mod rng;
 pub mod replay_buffer;
+pub mod serialization;
 pub mod types;
 pub mod visualization;
 pub mod memory_optimization;
