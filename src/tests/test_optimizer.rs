@@ -1,4 +1,4 @@
-use ndarray::array;
+use ndarray::{array, Array1, Array2};
 use crate::optimizer::{Optimizer, SGD, Adam, RMSProp, OptimizerWrapper, GradientClipper, LearningRateScheduler};
 use crate::layers::Layer;
 use crate::activations::Activation;
@@ -288,4 +288,60 @@ fn test_adam_time_step_increment() {
     
     // After updating all layers, time step should increment
     assert_eq!(adam.t, 2);
+}
+#[test]
+fn adam_matches_the_formula_it_replaced() {
+    // The update runs as one fused pass over the arrays. This walks the same three steps
+    // written out separately, so a mistake in the fusion shows up as a difference.
+    let (beta1, beta2, epsilon, lr) = (0.9f32, 0.999f32, 1e-8f32, 0.01f32);
+    let mut adam = Adam::new(&[], beta1, beta2, epsilon);
+
+    let mut weights = Array2::from_shape_fn((4, 3), |(i, j)| (i as f32) * 0.3 - (j as f32) * 0.1);
+    let mut reference = weights.clone();
+    let mut m = Array2::<f32>::zeros((4, 3));
+    let mut v = Array2::<f32>::zeros((4, 3));
+
+    for step in 1..=5 {
+        let gradients =
+            Array2::from_shape_fn((4, 3), |(i, j)| ((step * 7 + i * 3 + j) as f32 * 0.41).sin());
+
+        // Adam advances t once per full pass over the network, not once per call, so the
+        // reference reads the same counter rather than assuming one step per iteration
+        let t = adam.t as i32;
+        adam.update_weights(0, &mut weights, &gradients, lr);
+
+        m = &m * beta1 + &(&gradients * (1.0 - beta1));
+        v = &v * beta2 + &(&gradients * &gradients * (1.0 - beta2));
+        let m_hat = m.mapv(|x| x / (1.0 - beta1.powi(t)));
+        let v_hat = v.mapv(|x| x / (1.0 - beta2.powi(t)));
+        reference = reference - (m_hat / (v_hat.mapv(f32::sqrt) + epsilon)) * lr;
+
+        for (a, b) in weights.iter().zip(reference.iter()) {
+            assert!((a - b).abs() < 1e-6, "step {}: {} vs {}", step, a, b);
+        }
+    }
+}
+
+#[test]
+fn rmsprop_matches_the_formula_it_replaced() {
+    let (beta, epsilon, lr) = (0.9f32, 1e-8f32, 0.01f32);
+    let mut rmsprop = RMSProp::new(&[], beta, epsilon);
+
+    let mut biases = Array1::from_vec(vec![0.5, -0.25, 1.0]);
+    let mut reference = biases.clone();
+    let mut v = Array1::<f32>::zeros(3);
+
+    for step in 1..=5 {
+        let gradients =
+            Array1::from_shape_fn(3, |i| ((step * 5 + i) as f32 * 0.37).cos());
+
+        rmsprop.update_biases(0, &mut biases, &gradients, lr);
+
+        v = &v * beta + &(&gradients * &gradients * (1.0 - beta));
+        reference = reference - (&gradients / (v.mapv(f32::sqrt) + epsilon)) * lr;
+
+        for (a, b) in biases.iter().zip(reference.iter()) {
+            assert!((a - b).abs() < 1e-6, "step {}: {} vs {}", step, a, b);
+        }
+    }
 }

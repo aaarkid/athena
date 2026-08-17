@@ -62,8 +62,59 @@
 pub mod gradient_clipper;
 pub mod lr_scheduler;
 
-use ndarray::{Array2, Array1};
+use ndarray::{Array, Array2, Array1, Dimension, Zip};
 use crate::layers::Layer;
+
+/// One Adam update over a whole parameter array, in a single pass and without allocating.
+///
+/// The moment estimates, the bias correction and the step are all applied per element, so
+/// the temporaries the expression form would build never exist.
+fn adam_step<D: Dimension>(
+    parameters: &mut Array<f32, D>,
+    m: &mut Array<f32, D>,
+    v: &mut Array<f32, D>,
+    gradients: &Array<f32, D>,
+    beta1: f32,
+    beta2: f32,
+    epsilon: f32,
+    t: i32,
+    learning_rate: f32,
+) {
+    // powi once per call rather than once per element
+    let correction1 = 1.0 - beta1.powi(t);
+    let correction2 = 1.0 - beta2.powi(t);
+
+    Zip::from(parameters)
+        .and(m)
+        .and(v)
+        .and(gradients)
+        .for_each(|parameter, m, v, &gradient| {
+            *m = beta1 * *m + (1.0 - beta1) * gradient;
+            *v = beta2 * *v + (1.0 - beta2) * gradient * gradient;
+
+            let m_hat = *m / correction1;
+            let v_hat = *v / correction2;
+            *parameter -= learning_rate * m_hat / (v_hat.sqrt() + epsilon);
+        });
+}
+
+/// One RMSProp update over a whole parameter array, in a single pass and without allocating.
+fn rmsprop_step<D: Dimension>(
+    parameters: &mut Array<f32, D>,
+    v: &mut Array<f32, D>,
+    gradients: &Array<f32, D>,
+    beta: f32,
+    epsilon: f32,
+    learning_rate: f32,
+) {
+    Zip::from(parameters)
+        .and(v)
+        .and(gradients)
+        .for_each(|parameter, v, &gradient| {
+            *v = beta * *v + (1.0 - beta) * gradient * gradient;
+            *parameter -= learning_rate * gradient / (v.sqrt() + epsilon);
+        });
+}
 
 pub use gradient_clipper::GradientClipper;
 pub use lr_scheduler::LearningRateScheduler;
@@ -194,17 +245,19 @@ impl Optimizer for Adam {
             self.v_weights[layer_idx] = Array2::<f32>::zeros(gradients.dim());
         }
 
-        let m = &mut self.m_weights[layer_idx];
-        let v = &mut self.v_weights[layer_idx];
+        adam_step(
+            weights,
+            &mut self.m_weights[layer_idx],
+            &mut self.v_weights[layer_idx],
+            gradients,
+            self.beta1,
+            self.beta2,
+            self.epsilon,
+            self.t as i32,
+            learning_rate,
+        );
 
-        m.zip_mut_with(&(&*m * self.beta1 + &(gradients * (1.0 - self.beta1))), |a, b| *a = *b);
-        v.zip_mut_with(&(&*v * self.beta2 + &(gradients * gradients * (1.0 - self.beta2))), |a, b| *a = *b);
 
-        let m_hat = m.mapv(|x| x / (1.0 - self.beta1.powi(self.t as i32)));
-        let v_hat = v.mapv(|x| x / (1.0 - self.beta2.powi(self.t as i32)));
-
-        *weights -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
-        
         // Track updates
         self.update_count += 1;
         if self.update_count >= self.layer_count * 2 {
@@ -226,17 +279,19 @@ impl Optimizer for Adam {
             self.v_biases[layer_idx] = Array1::<f32>::zeros(gradients.len());
         }
 
-        let m = &mut self.m_biases[layer_idx];
-        let v = &mut self.v_biases[layer_idx];
+        adam_step(
+            biases,
+            &mut self.m_biases[layer_idx],
+            &mut self.v_biases[layer_idx],
+            gradients,
+            self.beta1,
+            self.beta2,
+            self.epsilon,
+            self.t as i32,
+            learning_rate,
+        );
 
-        m.zip_mut_with(&(&*m * self.beta1 + &(gradients * (1.0 - self.beta1))), |a, b| *a = *b);
-        v.zip_mut_with(&(&*v * self.beta2 + &(gradients * gradients * (1.0 - self.beta2))), |a, b| *a = *b);
 
-        let m_hat = m.mapv(|x| x / (1.0 - self.beta1.powi(self.t as i32)));
-        let v_hat = v.mapv(|x| x / (1.0 - self.beta2.powi(self.t as i32)));
-
-        *biases -= &((&m_hat / (v_hat.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
-        
         // Track updates
         self.update_count += 1;
         if self.update_count >= self.layer_count * 2 {
@@ -290,13 +345,14 @@ impl Optimizer for RMSProp {
             self.v_weights[layer_idx] = Array2::<f32>::zeros(gradients.dim());
         }
 
-        let v = &mut self.v_weights[layer_idx];
-
-        // Update moving average of squared gradients
-        v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
-
-        // Update weights
-        *weights -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
+        rmsprop_step(
+            weights,
+            &mut self.v_weights[layer_idx],
+            gradients,
+            self.beta,
+            self.epsilon,
+            learning_rate,
+        );
     }
 
     fn update_biases(&mut self, layer_idx: usize, biases: &mut Array1<f32>, gradients: &Array1<f32>, learning_rate: f32) {
@@ -308,12 +364,13 @@ impl Optimizer for RMSProp {
             self.v_biases[layer_idx] = Array1::<f32>::zeros(gradients.len());
         }
 
-        let v = &mut self.v_biases[layer_idx];
-
-        // Update moving average of squared gradients
-        v.zip_mut_with(&(&*v * self.beta + &(gradients * gradients * (1.0 - self.beta))), |a, b| *a = *b);
-
-        // Update biases
-        *biases -= &((&*gradients / (v.mapv(f32::sqrt) + self.epsilon)) * learning_rate);
+        rmsprop_step(
+            biases,
+            &mut self.v_biases[layer_idx],
+            gradients,
+            self.beta,
+            self.epsilon,
+            learning_rate,
+        );
     }
 }
