@@ -549,7 +549,7 @@ mod tests {
                 }
             }).collect();
 
-            agent.train(&experiences, 0.01).unwrap();
+            agent.train(&experiences, 0.1).unwrap();
         }
 
         // 10 steps of reward 10 discounted at 0.99 is 10 * (1 - 0.99^10) / 0.01

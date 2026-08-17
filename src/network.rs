@@ -146,15 +146,25 @@ impl NeuralNetwork {
     /// Compute gradients for the neural network's weights and biases for a batch of input vectors.
     /// This function calculates the gradients of the weights and biases for each input vector in the batch
     /// with respect to the target outputs using backpropagation.
+    /// Parameter gradients for a batch, averaged over the batch.
+    ///
+    /// The per-layer `backward_batch` sums over the batch, so this divides by the batch
+    /// size. Without that the effective learning rate scales with batch size: the same
+    /// learning rate that is stable at batch 32 takes steps 32 times larger at batch
+    /// 1024. Every framework averages here, so a learning rate carried over from one
+    /// behaves as expected.
     pub fn backward_batch(&mut self, output_errors: ArrayView2<f32>) -> Vec<(Array2<f32>, Array1<f32>)> {
         let mut gradients: Vec<(Array2<f32>, Array1<f32>)> = Vec::new();
         let mut current_error = output_errors.to_owned();
-    
+
+        let batch_size = output_errors.shape()[0].max(1) as f32;
+        let scale = 1.0 / batch_size;
+
         let length = self.layers.len();
         for i in (0..length).rev() {
             let layer = &mut self.layers[i];
             let (adjusted_error, weight_gradients, bias_gradients) = layer.backward_batch(current_error.view());
-            gradients.push((weight_gradients, bias_gradients));
+            gradients.push((weight_gradients * scale, bias_gradients * scale));
         
             if i != 0 {
                 current_error = adjusted_error.dot(&layer.weights.t());
