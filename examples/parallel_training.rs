@@ -9,6 +9,7 @@ use athena::optimizer::OptimizerWrapper;
 use athena::parallel::{ParallelNetwork, ParallelGradients, ParallelReplayBuffer, ParallelAugmentation};
 use athena::replay_buffer::Experience;
 use athena::metrics::MetricsTracker;
+use ndarray::parallel::prelude::*;
 use ndarray::{Array1, Array2, Array4};
 use std::time::Instant;
 
@@ -100,14 +101,23 @@ fn main() {
     // Metrics tracking
     let mut metrics = MetricsTracker::new(3, 1000);
     
+    // Each worker needs its own copy of the network, forward passes take &mut self
+    let mut workers: Vec<NeuralNetwork> = (0..num_envs).map(|_| q_network.clone()).collect();
+
     println!("Starting parallel training with {} environments...\n", num_envs);
-    
+
     for episode in 0..num_episodes {
         let episode_start = Instant::now();
-        
-        // Parallel episode collection (simplified without rayon)
-        let experiences: Vec<Vec<Experience>> = envs.iter_mut()
-            .map(|env| {
+
+        // Refresh the workers from the network trained in the previous episode
+        for worker in workers.iter_mut() {
+            *worker = q_network.clone();
+        }
+
+        // Collect one episode per environment, across threads
+        let experiences: Vec<Vec<Experience>> = envs.par_iter_mut()
+            .zip(workers.par_iter_mut())
+            .map(|(env, q_network)| {
                 let mut episode_experiences = Vec::new();
                 let mut state = env.reset();
                 let mut _total_reward = 0.0;
@@ -117,7 +127,6 @@ fn main() {
                     let action = if rand::random::<f32>() < epsilon {
                         rand::random::<usize>() % 2
                     } else {
-                        // Use the main network for action selection (not parallel for single state)
                         let q_values = q_network.forward(state.view());
                         let mut max_idx = 0;
                         let mut max_val = q_values[0];
