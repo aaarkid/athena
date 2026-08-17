@@ -199,6 +199,26 @@ impl DqnAgent {
     pub fn update_epsilon(&mut self, epsilon: f32) {
         self.epsilon = epsilon.clamp(0.0, 1.0);
     }
+
+    /// Multiply epsilon by `decay_rate`, stopping at `min_epsilon`.
+    ///
+    /// The usual exploration schedule: call it once per episode with a rate slightly
+    /// below 1.0. A floor above zero keeps a trained agent trying the occasional other
+    /// action, which matters when the environment drifts.
+    ///
+    /// ```
+    /// # use athena::agent::DqnAgent;
+    /// # use athena::optimizer::{OptimizerWrapper, SGD};
+    /// let mut agent = DqnAgent::new(&[4, 16, 2], 1.0, OptimizerWrapper::SGD(SGD::new()), 100, true);
+    /// for _ in 0..1000 {
+    ///     agent.decay_epsilon(0.99, 0.05);
+    /// }
+    /// assert!((agent.epsilon - 0.05).abs() < 1e-6);
+    /// ```
+    pub fn decay_epsilon(&mut self, decay_rate: f32, min_epsilon: f32) {
+        let floor = min_epsilon.clamp(0.0, 1.0);
+        self.epsilon = (self.epsilon * decay_rate).clamp(floor, 1.0);
+    }
     
     /// Update target network weights from main network
     pub fn update_target_network(&mut self) {

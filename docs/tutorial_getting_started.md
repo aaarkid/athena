@@ -325,27 +325,33 @@ let agent = PPOBuilder::new()
 
 ### 2. Custom Network Architectures
 
-You can create custom network architectures:
+`NeuralNetwork` holds dense layers only. `Layer` is an alias for `DenseLayer`, not an
+enum, so batch norm and dropout cannot be pushed into the same vector. What you can vary
+is the width, the depth and the activation of each layer:
 
 ```rust
-use athena::network::NeuralNetwork;
-use athena::layers::{Layer, BatchNormLayer, DropoutLayer};
 use athena::activations::Activation;
+use athena::layers::Layer;
+use athena::network::NeuralNetwork;
+use athena::optimizer::{Adam, OptimizerWrapper};
 
-// Create layers manually
-let mut layers = Vec::new();
+let state_dim = 8;
+let action_dim = 4;
 
-// First hidden layer with batch norm
-layers.push(Layer::new(state_dim, 128, Activation::Relu));
-layers.push(Layer::BatchNorm(BatchNormLayer::new(128)));
+let layers = vec![
+    Layer::new(state_dim, 128, Activation::Relu),
+    Layer::new(128, 64, Activation::Tanh),
+    Layer::new(64, action_dim, Activation::Linear),
+];
 
-// Second hidden layer with dropout
-layers.push(Layer::new(128, 64, Activation::Relu));
-layers.push(Layer::Dropout(DropoutLayer::new(64, 0.2)));
-
-// Output layer
-layers.push(Layer::new(64, action_dim, Activation::Linear));
+let network = NeuralNetwork::new_empty()
+    .with_layers(layers);
+let _ = network;
 ```
+
+For batch norm, dropout, conv or pooling, compose the layers by hand against
+`LayerTrait`. `examples/conv_shapes.rs` is the worked reference, and
+[`docs/conventions.md`](conventions.md) has the full table of what goes where.
 
 ### 3. Hyperparameter Tuning
 

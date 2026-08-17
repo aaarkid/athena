@@ -6,24 +6,24 @@
 //!
 //! ## Getting started
 //!
-//! - [Tutorials](tutorials) - guides and worked examples
-//! - [Getting Started Guide](tutorials::getting_started) - your first agent
+//! - [Quickstart](docs::quickstart) - the whole path: act, learn, save, reload
+//! - [Conventions](docs::conventions) - shapes, weight orientation, what can be stacked
 //! - [Examples](https://github.com/aaarkid/athena/tree/master/examples) - runnable code samples
 //!
 //! ## Core concepts
 //!
-//! - [Neural Networks](network) - layer stacks and training
+//! - [Neural Networks](network) - dense layer stacks and training
+//! - [Recurrent Networks](recurrent) - the only way to train an LSTM or GRU
 //! - [RL Agents](agent) - DQN and traits for custom agents
 //! - [Algorithms](algorithms) - A2C, PPO, SAC, TD3
 //! - [Optimizers](optimizer) - SGD, Adam, RMSProp
+//! - [Replay Buffers](replay_buffer) - uniform and prioritized
 //!
-//! ## Advanced topics
+//! ## Guides
 //!
-//! - [Advanced Tutorial](tutorials::advanced) - custom layers and techniques
-//! - [Performance Guide](tutorials::performance) - optimization tips
-//! - [GPU Acceleration](gpu) - OpenCL backend, Intel Arc and NVIDIA
-//! - [Best Practices](tutorials::best_practices) - recommended patterns
 //! - [Algorithm Selection](tutorials::algorithms) - choosing an algorithm
+//! - [Performance Guide](tutorials::performance) - what costs what
+//! - [GPU Acceleration](gpu) - OpenCL backend, and what the mock does not do
 //!
 //! ## Features
 //!
@@ -34,42 +34,61 @@
 //! - Native Rust, Python bindings and WebAssembly targets
 //!
 //! ## Quick Start
-//! 
-//! ```rust,no_run
-//! use athena::network::NeuralNetwork;
+//!
+//! ```rust
 //! use athena::agent::DqnAgent;
-//! use athena::activations::Activation;
-//! use athena::optimizer::{OptimizerWrapper, Adam};
+//! use athena::optimizer::{Adam, OptimizerWrapper};
 //! use athena::replay_buffer::ReplayBuffer;
-//! 
-//! // Create a neural network
-//! let layer_sizes = &[4, 128, 128, 2];
-//! let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
-//! 
-//! // Create a DQN agent
-//! let agent = DqnAgent::new(layer_sizes, 0.1, optimizer, 1000, true);
-//! 
-//! // Create a replay buffer
-//! let mut buffer = ReplayBuffer::new(10000);
+//!
+//! // Two observations in, four actions out, epsilon 1.0 to start
+//! let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+//! let mut agent = DqnAgent::new(&[2, 64, 64, 4], 1.0, optimizer, 200, true);
+//! let mut buffer = ReplayBuffer::new(20_000);
+//!
+//! let state = ndarray::array![0.0, 0.0];
+//! let action = agent.act(state.view()).unwrap();
+//! assert!(action < 4);
 //! ```
-//! 
+//!
+//! See [Quickstart](docs::quickstart) for the rest: the replay loop, epsilon decay,
+//! evaluation and saving.
+//!
 //! ## Module Organization
-//! 
-//! - [`activations`] - Activation functions (ReLU, Sigmoid, Tanh, etc.)
-//! - [`agent`] - RL agents (DQN and traits for custom agents)
-//! - [`algorithms`] - Advanced RL algorithms (A2C, PPO, SAC, TD3)
-//! - [`builders`] - Builder patterns for convenient object construction
-//! - [`debug`] - Debugging utilities for network inspection
-//! - [`error`] - Error types and result handling
-//! - [`export`] - Writing a trained network out to disk
-//! - [`layers`] - Neural network layers (Dense, BatchNorm, Dropout)
-//! - [`loss`] - Loss functions for training
-//! - [`metrics`] - Training metrics and tracking
-//! - [`network`] - Core neural network implementation
-//! - [`optimizer`] - Optimization algorithms
-//! - [`replay_buffer`] - Experience replay for RL
-//! - [`types`] - Generic type definitions for states and actions
-//! - [`visualization`] - Tools for visualizing networks and training
+//!
+//! Core:
+//!
+//! - [`activations`] - Relu, Sigmoid, Tanh, Linear, LeakyRelu, Elu, Gelu
+//! - [`layers`] - dense, conv, pooling, batch norm, dropout, LSTM, GRU, embedding
+//! - [`network`] - `NeuralNetwork`, a stack of dense layers, plus training and inference
+//! - [`recurrent`] - `RecurrentNetwork`, an LSTM or GRU cell with a dense head
+//! - [`optimizer`] - SGD, Adam, RMSProp, gradient clipping, learning rate schedules
+//! - [`loss`] - MSE, Huber, cross entropy
+//!
+//! Reinforcement learning:
+//!
+//! - [`agent`] - `DqnAgent` and the `RLAgent` traits
+//! - [`algorithms`] - A2C, PPO, SAC, TD3
+//! - [`replay_buffer`] - `Experience`, `ReplayBuffer`, `PrioritizedReplayBuffer`
+//! - [`types`] - `State` and `Action` traits, `ActionSpace`
+//!
+//! Supporting:
+//!
+//! - [`builders`] - builder patterns for networks and agents
+//! - [`debug`] - network inspection and numerical checks
+//! - [`error`] - `AthenaError` and `Result`
+//! - [`export`] - writing a network out as text or JSON
+//! - [`gpu`] - OpenCL backend, and a mock that runs on the CPU
+//! - [`memory_optimization`] - allocation-conscious training helpers
+//! - [`metrics`] - training metrics and tracking
+//! - [`parallel`] - rayon-backed batch helpers
+//! - [`rng`] - seedable generators, so a run reproduces
+//! - [`serialization`] - the on-disk file format
+//! - [`tensorboard`] - event file writer
+//! - [`tutorials`] - the guides, as module documentation
+//! - [`visualization`] - text plots of training history
+//!
+//! Behind features: `belief` (`belief-states`), `multi_agent` (`multi-agent`),
+//! `bindings` (`python`), `wasm` (`wasm`).
 
 #[macro_use]
 pub mod macros;
@@ -90,6 +109,15 @@ pub mod recurrent;
 pub mod rng;
 pub mod replay_buffer;
 pub mod serialization;
+
+/// The documents under `docs/`, compiled so their code samples cannot drift.
+pub mod docs {
+    #[doc = include_str!("../docs/quickstart.md")]
+    pub mod quickstart {}
+
+    #[doc = include_str!("../docs/conventions.md")]
+    pub mod conventions {}
+}
 pub mod types;
 pub mod visualization;
 pub mod memory_optimization;

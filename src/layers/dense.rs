@@ -10,7 +10,13 @@ use super::initialization::WeightInit;
 /// A fully connected (dense) layer in a neural network
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DenseLayer {
+    /// Stored `(input_size, output_size)`.
+    ///
+    /// So the pre-activation is `input.dot(&weights)` and a delta propagates back as
+    /// `adjusted_error.dot(&weights.t())`. Reversing this caused two panicking bugs in
+    /// this repository; check any new `.dot` against it. See `docs/conventions.md`.
     pub weights: Array2<f32>,
+    /// One per output, added to every row of the batch.
     pub biases: Array1<f32>,
     pub activation: Activation,
     // Written by forward_batch for backward_batch to read. Skipped on the wire: they
