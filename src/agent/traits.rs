@@ -56,11 +56,35 @@ pub trait ActorCriticAgent<S: State, A: Action>: PolicyBasedAgent<S, A> {
 /// Adapter to make DqnAgent work with generic traits
 pub struct DqnAgentAdapter {
     inner: crate::agent::DqnAgent,
+    buffer: crate::replay_buffer::ReplayBuffer,
+    batch_size: usize,
+    gamma: f32,
 }
 
 impl DqnAgentAdapter {
+    /// Wrap an agent with a 10k experience buffer, batches of 32 and gamma 0.99
     pub fn new(inner: crate::agent::DqnAgent) -> Self {
-        DqnAgentAdapter { inner }
+        Self::with_config(inner, 10_000, 32, 0.99)
+    }
+
+    /// Same, with the buffer capacity, batch size and discount factor spelled out
+    pub fn with_config(
+        inner: crate::agent::DqnAgent,
+        capacity: usize,
+        batch_size: usize,
+        gamma: f32,
+    ) -> Self {
+        DqnAgentAdapter {
+            inner,
+            buffer: crate::replay_buffer::ReplayBuffer::new(capacity),
+            batch_size,
+            gamma,
+        }
+    }
+
+    /// Number of experiences currently held
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
     }
 }
 
@@ -70,24 +94,42 @@ impl RLAgent<crate::types::DenseState, crate::types::DiscreteAction> for DqnAgen
         Ok(crate::types::DiscreteAction::new(action_idx))
     }
     
-    fn update(&mut self, experience: GenericExperience<crate::types::DenseState, crate::types::DiscreteAction>, _learning_rate: f32) -> Result<()> {
-        // Convert to standard experience
-        let _exp = crate::replay_buffer::Experience {
+    fn update(&mut self, experience: GenericExperience<crate::types::DenseState, crate::types::DiscreteAction>, learning_rate: f32) -> Result<()> {
+        self.buffer.add(crate::replay_buffer::Experience {
             state: experience.state.data.clone(),
             action: experience.action.index,
             reward: experience.reward,
             next_state: experience.next_state.data.clone(),
             done: experience.done,
-        };
-        
-        // Add to internal buffer and train
-        // Note: This is simplified - in practice you'd want a proper buffer
+        });
+
+        // Wait until there is enough in the buffer to form a batch
+        if self.buffer.len() < self.batch_size {
+            return Ok(());
+        }
+
+        let batch = self.buffer.sample(self.batch_size);
+        self.inner.train_on_batch(&batch, self.gamma, learning_rate)?;
         Ok(())
     }
-    
-    fn train_batch(&mut self, _batch: &[GenericExperience<crate::types::DenseState, crate::types::DiscreteAction>], _learning_rate: f32) -> Result<()> {
-        // Convert batch and train
-        // This is a simplified implementation
+
+    fn train_batch(&mut self, batch: &[GenericExperience<crate::types::DenseState, crate::types::DiscreteAction>], learning_rate: f32) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let experiences: Vec<crate::replay_buffer::Experience> = batch.iter()
+            .map(|e| crate::replay_buffer::Experience {
+                state: e.state.data.clone(),
+                action: e.action.index,
+                reward: e.reward,
+                next_state: e.next_state.data.clone(),
+                done: e.done,
+            })
+            .collect();
+
+        let refs: Vec<&crate::replay_buffer::Experience> = experiences.iter().collect();
+        self.inner.train_on_batch(&refs, self.gamma, learning_rate)?;
         Ok(())
     }
     
