@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::prelude::*;
 use rand_distr::Normal;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,16 @@ use crate::network::NeuralNetwork;
 use crate::optimizer::OptimizerWrapper;
 use crate::activations::Activation;
 use crate::error::{AthenaError, Result};
+
+/// Bounds on the actor's log_std output. Below the lower bound the policy becomes
+/// effectively deterministic and log probabilities explode; above the upper bound
+/// the samples leave the useful range of tanh.
+const LOG_STD_MIN: f32 = -20.0;
+const LOG_STD_MAX: f32 = 2.0;
+/// Keeps the tanh Jacobian correction finite when an action saturates at +/-1
+const TANH_EPS: f32 = 1e-6;
+/// Per-element ceiling on the policy gradient, to survive early training
+const ACTOR_GRAD_CLIP: f32 = 10.0;
 
 /// Soft Actor-Critic (SAC) Agent for continuous action spaces
 ///
@@ -160,6 +170,50 @@ impl SACAgent {
         }
     }
 
+    /// Sample an action and return its log probability from the same forward pass.
+    ///
+    /// Returns the squashed action, its log probability, the pre-tanh sample and the
+    /// noise that produced it. The last two are what the reparameterized policy
+    /// gradient needs; `log_prob` alone has to invert the tanh and loses precision
+    /// near the limits.
+    fn sample_with_log_prob(
+        &mut self,
+        state: ArrayView1<f32>,
+    ) -> Result<(Array1<f32>, f32, Array1<f32>, Array1<f32>)> {
+        let output = self.actor.forward(state);
+        let action_size = output.len() / 2;
+
+        let mut action = Array1::zeros(action_size);
+        let mut pre_tanh = Array1::zeros(action_size);
+        let mut noise = Array1::zeros(action_size);
+        let mut log_prob = 0.0;
+
+        let normal = Normal::new(0.0f32, 1.0)
+            .map_err(|e| AthenaError::NumericalError(e.to_string()))?;
+
+        for i in 0..action_size {
+            let mean = output[i];
+            let log_std = output[action_size + i].clamp(LOG_STD_MIN, LOG_STD_MAX);
+            let std = log_std.exp();
+
+            let eps: f32 = self.rng.sample(normal);
+            let u = mean + std * eps;
+            let a = u.tanh();
+
+            noise[i] = eps;
+            pre_tanh[i] = u;
+            action[i] = a;
+
+            // log N(u; mean, std) with (u - mean) / std being eps by construction,
+            // then the tanh change-of-variables correction
+            let gaussian = -0.5 * eps * eps - log_std - 0.5 * (2.0 * std::f32::consts::PI).ln();
+            let squash_correction = (1.0 - a * a + TANH_EPS).ln();
+            log_prob += gaussian - squash_correction;
+        }
+
+        Ok((action, log_prob, pre_tanh, noise))
+    }
+
     /// Compute log probability of action under current policy
     fn log_prob(&mut self, state: ArrayView1<f32>, action: ArrayView1<f32>) -> Result<f32> {
         let output = self.actor.forward(state);
@@ -240,9 +294,8 @@ impl SACAgent {
             let action = actions.row(i);
             let next_state = next_states.row(i);
 
-            // Sample next action from current policy
-            let next_action = self.act(next_state, false)?;
-            let next_log_prob = self.log_prob(next_state, next_action.view())?;
+            // Sample next action from the current policy, log probability included
+            let (next_action, next_log_prob, _, _) = self.sample_with_log_prob(next_state)?;
 
             // Compute target Q-value using target networks
             let sa_concat_next = concatenate(next_state, next_action.view());
@@ -277,98 +330,108 @@ impl SACAgent {
         let q_loss = (&q1_outputs - &q1_targets).mapv(|x| x * x).mean().unwrap_or(0.0)
                    + (&q2_outputs - &q2_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
-        // Policy update
+        // Policy update, by the reparameterized policy gradient.
         //
-        // SAC objective: maximize E[Q(s,a) - α * log π(a|s)]
+        // Objective: minimize L = E[alpha * log pi(a|s) - Q(s,a)], where the action
+        // is written as a = tanh(u) with u = mean + std * eps and eps ~ N(0,1) held
+        // fixed. That keeps a differentiable in the actor's own outputs, so the
+        // gradient flows: L -> a -> u -> {mean, log_std}.
         //
-        // Instead of complex reparameterization gradients, we use a simpler approach:
-        // - Sample action from current policy
-        // - Compute Q-value and log_prob
-        // - Create target that moves mean toward high-Q actions
+        //   dL/da       = alpha * 2a / (1 - a^2)   -   dQ/da
+        //                 \____ tanh correction __/     \_ from the critic _/
+        //   dL/du       = dL/da * (1 - a^2)
+        //   dL/dmean    = dL/du
+        //   dL/dlog_std = dL/du * std * eps  -  alpha
+        //                                       \_ the -log(std) term in log pi _/
 
         let actor_outputs = self.actor.forward_batch(states.view());
-        let mut actor_targets = actor_outputs.clone();
 
+        // Sample a fresh action per state, keeping the noise that produced it
+        let mut sampled_actions = Array2::zeros((batch_size, self.action_size));
+        let mut noises = Array2::zeros((batch_size, self.action_size));
+        let mut log_probs = vec![0.0f32; batch_size];
+
+        for i in 0..batch_size {
+            let (action, log_prob, _, noise) = self.sample_with_log_prob(states.row(i))?;
+            sampled_actions.row_mut(i).assign(&action);
+            noises.row_mut(i).assign(&noise);
+            log_probs[i] = log_prob;
+        }
+
+        // dQ/da, taken from whichever critic gives the smaller value for that sample.
+        // forward_batch first, the backward pass reads its cached pre-activations.
+        let sa_batch = concatenate_batch(states.view(), sampled_actions.view());
+        let q1_values = self.q1.forward_batch(sa_batch.view());
+        let ones = Array2::from_elem((batch_size, 1), 1.0);
+        let dq1_dinput = self.q1.input_gradient_batch(ones.view());
+
+        let q2_values = self.q2.forward_batch(sa_batch.view());
+        let dq2_dinput = self.q2.input_gradient_batch(ones.view());
+
+        let state_size = states.ncols();
+        let mut actor_errors = Array2::zeros((batch_size, self.action_size * 2));
         let mut policy_loss = 0.0;
         let mut mean_log_prob = 0.0;
 
         for i in 0..batch_size {
-            let state = states.row(i);
-            let output = actor_outputs.row(i);
+            let q1 = q1_values[[i, 0]];
+            let q2 = q2_values[[i, 0]];
+            let use_q1 = q1 <= q2;
+            let q_value = if use_q1 { q1 } else { q2 };
 
-            // Get mean and log_std from actor output
-            let mean = output.slice(ndarray::s![..self.action_size]).to_owned();
-            let log_std = output.slice(ndarray::s![self.action_size..]).to_owned();
-            let _std = log_std.mapv(|x| x.clamp(-20.0, 2.0).exp());
-
-            // Sample action
-            let action = self.act(state, false)?;
-
-            // Compute log probability
-            let log_prob = self.log_prob(state, action.view())?;
-            mean_log_prob += log_prob;
-
-            // Get Q-value
-            let sa_concat = concatenate(state, action.view());
-            let q1_value = self.q1.forward(sa_concat.view())[0];
-            let q2_value = self.q2.forward(sa_concat.view())[0];
-            let q_value = q1_value.min(q2_value);
-
-            policy_loss += self.alpha * log_prob - q_value;
-
-            // Actor update: move mean toward actions with high Q - α*log_prob
-            // The "advantage" here is Q - α*log_prob (higher is better)
-            let advantage = q_value - self.alpha * log_prob;
-
-            // Normalize advantage for stability. A non-finite critic must not reach
-            // the targets: clamp() passes NaN straight through.
-            let adv_scale = if advantage.is_finite() {
-                advantage.clamp(-10.0, 10.0) / 10.0
-            } else {
-                0.0
-            };
+            policy_loss += self.alpha * log_probs[i] - q_value;
+            mean_log_prob += log_probs[i];
 
             for j in 0..self.action_size {
-                // Inverse tanh to get pre-squashed action (with numerical stability)
-                let clamped_action = action[j].clamp(-0.9999, 0.9999);
-                let ratio = (1.0 + clamped_action) / (1.0 - clamped_action);
-                let atanh_action = if ratio > 0.0 { 0.5 * ratio.ln() } else { 0.0 };
+                let a = sampled_actions[[i, j]];
+                let log_std = actor_outputs[[i, self.action_size + j]].clamp(LOG_STD_MIN, LOG_STD_MAX);
+                let std = log_std.exp();
+                let eps = noises[[i, j]];
 
-                // Check for NaN and use current mean as fallback
-                let target_mean = if atanh_action.is_finite() && mean[j].is_finite() {
-                    // Move mean toward action if advantage is positive
-                    (mean[j] + adv_scale * (atanh_action - mean[j]) * 0.1).clamp(-5.0, 5.0)
+                // Gradient of the critic with respect to this action dimension
+                let dq_da = if use_q1 {
+                    dq1_dinput[[i, state_size + j]]
                 } else {
-                    mean[j].clamp(-5.0, 5.0)
+                    dq2_dinput[[i, state_size + j]]
                 };
-                actor_targets[[i, j]] = target_mean;
 
-                // Keep log_std, but encourage exploration when advantage is negative
-                let target_log_std = if log_std[j].is_finite() {
-                    (log_std[j] + if adv_scale < 0.0 { 0.01 } else { -0.01 }).clamp(-20.0, 2.0)
-                } else {
-                    0.0
-                };
-                actor_targets[[i, self.action_size + j]] = target_log_std;
+                let one_minus_a2 = (1.0 - a * a).max(TANH_EPS);
+                let dl_da = self.alpha * 2.0 * a / one_minus_a2 - dq_da;
+                let dl_du = dl_da * one_minus_a2;
+
+                let d_mean = dl_du;
+                let d_log_std = dl_du * std * eps - self.alpha;
+
+                // Anything non-finite here would poison the actor for good
+                actor_errors[[i, j]] = finite_or_zero(d_mean).clamp(-ACTOR_GRAD_CLIP, ACTOR_GRAD_CLIP);
+                actor_errors[[i, self.action_size + j]] =
+                    finite_or_zero(d_log_std).clamp(-ACTOR_GRAD_CLIP, ACTOR_GRAD_CLIP);
             }
         }
 
         policy_loss /= batch_size as f32;
         mean_log_prob /= batch_size as f32;
 
-        // Train actor with MSE toward targets (simpler and more stable)
-        self.actor.train_minibatch(states.view(), actor_targets.view(), learning_rate);
+        // Average over the batch, then apply the gradient
+        let actor_errors = actor_errors / batch_size as f32;
+        self.actor.train_with_output_errors(states.view(), actor_errors.view(), learning_rate);
 
-        // Temperature update, when auto_alpha is set
+        // Temperature update, when auto_alpha is set.
+        //
+        // L(alpha) = -log_alpha * (log pi + target_entropy), so the gradient with
+        // respect to log_alpha is just -(log pi + target_entropy). Entropy below
+        // target pushes alpha up, which buys back exploration.
 
         let mut alpha_loss = 0.0;
         if self.auto_alpha {
-            // Temperature loss: log_alpha * (entropy - target_entropy)
-            alpha_loss = -self.log_alpha * (mean_log_prob + self.target_entropy);
+            let entropy_gap = mean_log_prob + self.target_entropy;
+            alpha_loss = -self.log_alpha * entropy_gap;
 
-            // Update log_alpha with gradient descent
-            self.log_alpha -= learning_rate * alpha_loss;
-            self.alpha = self.log_alpha.exp().clamp(0.01, 1.0);
+            if entropy_gap.is_finite() {
+                self.log_alpha += learning_rate * entropy_gap;
+                self.log_alpha = self.log_alpha.clamp(-10.0, 2.0);
+                self.alpha = self.log_alpha.exp();
+            }
         }
 
         // Soft update of the target networks
@@ -414,6 +477,23 @@ fn concatenate(state: ArrayView1<f32>, action: ArrayView1<f32>) -> Array1<f32> {
     result.slice_mut(ndarray::s![..state.len()]).assign(&state);
     result.slice_mut(ndarray::s![state.len()..]).assign(&action);
     result
+}
+
+/// Concatenate a batch of states with a batch of actions, row by row
+fn concatenate_batch(states: ArrayView2<f32>, actions: ArrayView2<f32>) -> Array2<f32> {
+    let rows = states.nrows();
+    let state_size = states.ncols();
+    let action_size = actions.ncols();
+    let mut result = Array2::zeros((rows, state_size + action_size));
+
+    result.slice_mut(ndarray::s![.., ..state_size]).assign(&states);
+    result.slice_mut(ndarray::s![.., state_size..]).assign(&actions);
+    result
+}
+
+/// Zero stands in for anything non-finite, so one bad value cannot spread
+fn finite_or_zero(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 /// Stack 1D arrays into 2D array
@@ -638,5 +718,70 @@ mod tests {
         assert!(final_q1 > initial_q1 || final_q2 > initial_q2,
                 "Q should increase. Initial: ({}, {}), Final: ({}, {})",
                 initial_q1, initial_q2, final_q1, final_q2);
+    }
+
+    /// The policy gradient has to point the mean at higher-Q actions. Here the critic
+    /// is pinned to Q(s,a) = a, so the only correct direction is upward.
+    #[test]
+    fn policy_gradient_follows_the_critic() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        // No hidden layers, so the critic is a single linear layer we can set by hand
+        let mut agent = SACAgent::new(2, 1, &[], optimizer, 0.99, 0.005, 0.01, false);
+
+        // Q(s, a) = a: zero the state weights, put 1.0 on the action input
+        for q in [&mut agent.q1, &mut agent.q2, &mut agent.q1_target, &mut agent.q2_target] {
+            q.layers[0].weights.fill(0.0);
+            q.layers[0].weights[[2, 0]] = 1.0;
+            q.layers[0].biases.fill(0.0);
+        }
+
+        let state = Array1::from_vec(vec![0.3, -0.4]);
+        let mean_before = agent.actor.forward(state.view())[0];
+
+        let batch: Vec<SACExperience> = (0..16)
+            .map(|_| SACExperience {
+                state: state.clone(),
+                action: Array1::from_vec(vec![0.0]),
+                reward: 0.0,
+                next_state: state.clone(),
+                done: true,
+            })
+            .collect();
+
+        for _ in 0..40 {
+            // Restore the critic each round, the Q update would otherwise drift it
+            for q in [&mut agent.q1, &mut agent.q2] {
+                q.layers[0].weights.fill(0.0);
+                q.layers[0].weights[[2, 0]] = 1.0;
+                q.layers[0].biases.fill(0.0);
+            }
+            agent.update(&batch, 0.05).unwrap();
+        }
+
+        let mean_after = agent.actor.forward(state.view())[0];
+        assert!(mean_after.is_finite(), "mean went non-finite: {mean_after}");
+        assert!(mean_after > mean_before + 0.05,
+                "mean should climb toward the higher-Q action, went {mean_before} -> {mean_after}");
+    }
+
+    #[test]
+    fn log_prob_matches_the_sampled_action() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        let mut agent = SACAgent::new(3, 2, &[16], optimizer, 0.99, 0.005, 0.2, false);
+        let state = Array1::from_vec(vec![0.1, 0.2, 0.3]);
+
+        for _ in 0..20 {
+            let (action, log_prob, pre_tanh, noise) =
+                agent.sample_with_log_prob(state.view()).unwrap();
+
+            assert_eq!(action.len(), 2);
+            assert!(log_prob.is_finite(), "log_prob was {log_prob}");
+            assert!(action.iter().all(|a| a.abs() <= 1.0), "tanh output out of range");
+            // a = tanh(u) must hold for the gradient chain to be valid
+            for j in 0..2 {
+                assert!((action[j] - pre_tanh[j].tanh()).abs() < 1e-5);
+            }
+            assert!(noise.iter().all(|e| e.is_finite()));
+        }
     }
 }
