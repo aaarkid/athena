@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 use super::traits::Layer as LayerTrait;
@@ -178,13 +178,12 @@ impl LayerTrait for EmbeddingLayer {
         self.forward_single(index)
     }
     
-    /// Returns zeros. The `Layer` trait has no notion of a sequence, so it cannot
-    /// carry the gradient back through time. Use `backward_embeddings` instead; stacking this
-    /// layer inside a `NeuralNetwork` will not train it.
-    fn backward(&self, _output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
-        let dummy_weights = Array2::zeros((1, self.embedding_dim));
-        let dummy_bias = Array1::zeros(self.embedding_dim);
-        (dummy_weights, dummy_bias)
+    /// Gradient for the embedding table. The bias gradient is zeros, since an
+    /// embedding table has no bias.
+    fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {
+        let error_2d = output_error.insert_axis(Axis(0));
+        let grad_embeddings = self.backward_embeddings(error_2d);
+        (grad_embeddings, Array1::zeros(self.embedding_dim))
     }
     
     fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
