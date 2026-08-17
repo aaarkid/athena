@@ -35,7 +35,7 @@ impl MountainCar {
     fn reset(&mut self) -> Array1<f32> {
         self.position = rand::random::<f32>() * 0.2 - 0.6;  // [-0.6, -0.4]
         self.velocity = 0.0;
-        array![self.position, self.velocity]
+        self.observation()
     }
     
     fn step(&mut self, action: usize) -> (Array1<f32>, f32, bool) {
@@ -58,8 +58,10 @@ impl MountainCar {
             self.velocity = 0.0;
         }
         
-        // Check if goal reached
-        let done = self.position >= self.goal_position && self.velocity.abs() < 0.05;
+        // Reaching the goal ends the episode. Requiring a low velocity there as well
+        // makes the goal almost unreachable, so the agent never sees the payout and has
+        // nothing to learn from.
+        let done = self.position >= self.goal_position;
         
         // Reward shaping to help learning
         let reward = if done {
@@ -69,7 +71,20 @@ impl MountainCar {
             -1.0 + (self.position + 1.2) * 0.1
         };
         
-        (array![self.position, self.velocity], reward, done)
+        (self.observation(), reward, done)
+    }
+
+    /// Position and velocity scaled to roughly [-1, 1].
+    ///
+    /// Velocity spans +/- 0.07 against a position range of 1.8, so unscaled it is three
+    /// orders of magnitude smaller than the other input and the network barely sees it.
+    fn observation(&self) -> Array1<f32> {
+        let position = (self.position - self.min_position)
+            / (self.max_position - self.min_position)
+            * 2.0
+            - 1.0;
+        let velocity = self.velocity / self.max_speed;
+        array![position, velocity]
     }
 }
 

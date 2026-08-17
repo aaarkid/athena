@@ -198,7 +198,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             hidden_dims: vec![64, 64],
-            learning_rate: 3e-4,
+            learning_rate: 3e-3,
             gamma: 0.99,
             gae_lambda: 0.95,
             clip_epsilon: 0.2,
@@ -219,7 +219,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::default();
     
     // Create PPO agent
-    let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
+    // Adam, not SGD. CartPole's discounted return reaches the tens, and a squared value
+    // error at that magnitude diverges under plain SGD.
+    let optimizer = OptimizerWrapper::Adam(athena::optimizer::Adam::new(&[], 0.9, 0.999, 1e-8));
     
     let mut agent = PPOBuilder::new(4, 2)  // state_size, action_size
         .hidden_sizes(config.hidden_dims.clone())
@@ -415,7 +417,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         loop {
             let normalized_state = normalizer.normalize(&state);
-            let (action, _, _) = agent.act(normalized_state.view())?;
+            // Evaluate greedily. act() samples from the policy, which is right for
+            // collecting a rollout and wrong for measuring what the policy learned.
+            let probs = agent.get_action_probs(normalized_state.view());
+            let action = probs
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             let (next_state, reward, done) = eval_env.step(action);
             
             episode_reward += reward;
