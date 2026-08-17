@@ -193,27 +193,30 @@ fn test_prioritized_replay_buffer_importance_weights() {
         buffer.add_with_priority(exp, (i + 1) as f32);
     }
     
-    // Sampling is with replacement, so a batch of 5 can legitimately draw one index
-    // five times and produce five equal weights. Draw enough that every priority is
-    // represented; the five priorities differ, so the weights have to differ too.
-    let spread = |beta: f32| -> f32 {
-        let (_, weights, _) = buffer.sample_with_weights(200, beta);
-        assert!(weights.iter().all(|w| w.is_finite() && *w > 0.0));
+    // sample_with_weights caps the batch at the buffer length, so one call draws at
+    // most 5 and can legitimately draw the same index every time. Repeat and take the
+    // widest spread seen, which converges on (p_max / p_min)^beta.
+    let widest_spread = |beta: f32| -> f32 {
+        let mut widest = 1.0f32;
+        for _ in 0..50 {
+            let (_, weights, _) = buffer.sample_with_weights(5, beta);
+            assert!(weights.iter().all(|w| w.is_finite() && *w > 0.0));
 
-        let min = weights.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        assert!(max > min, "importance weights did not vary at beta {}", beta);
-        max / min
+            let min = weights.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max = weights.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            widest = widest.max(max / min);
+        }
+        widest
     };
 
-    // Beta is the exponent on the correction, so raising it widens the spread
-    let partial = spread(0.4);
-    let full = spread(1.0);
+    // The weight is (N * p)^-beta, so beta is the exponent on the spread between the
+    // most and least likely entry. Raising it has to widen that spread.
+    let partial = widest_spread(0.4);
+    let full = widest_spread(1.0);
+
+    assert!(partial > 1.0, "weights did not vary at beta 0.4");
     assert!(
-        full > partial,
-        "beta 1.0 spread {} should exceed beta 0.4 spread {}",
-        full,
-        partial
+        full > partial * 1.2,
     );
 }
 
