@@ -179,15 +179,17 @@ impl GRULayer {
         
         // Process in reverse order
         for t in (0..seq_len).rev() {
+            // With return_sequences off only the last step has an output error, but
+            // the gradient still has to travel back through every earlier step
             let grad_t = if self.return_sequences {
-                output_grad.slice(s![.., t, ..])
+                output_grad.slice(s![.., t, ..]).to_owned()
             } else if t == seq_len - 1 {
-                output_grad.slice(s![.., 0, ..])
+                output_grad.slice(s![.., 0, ..]).to_owned()
             } else {
-                continue;
+                Array2::zeros((batch_size, self.hidden_size))
             };
-            
-            let dh = &grad_t.to_owned() + &dh_next;
+
+            let dh = &grad_t + &dh_next;
             let x_t = cache.inputs.slice(s![.., t, ..]);
             let h_prev = &cache.hidden_states[t];
             
