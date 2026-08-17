@@ -2,7 +2,9 @@
 
 ![Athena Logo](assets/favicon.png)
 
-Athena is a high-performance, easy-to-use QDN (Quantum Deep Neural) library written in Rust. This library provides a robust foundation for building and training deep neural networks, with a focus on reinforcement learning.
+Athena is a deep learning library for Rust, with a focus on reinforcement learning. It covers
+network construction and training, the common RL algorithms, and deployment through Python
+bindings and WebAssembly.
 
 ## Table of Contents
 
@@ -14,9 +16,9 @@ Athena is a high-performance, easy-to-use QDN (Quantum Deep Neural) library writ
   - [Using a DQN Agent](#using-a-dqn-agent)
   - [Replay Buffer](#replay-buffer)
   - [Optimizers](#optimizers)
-<!-- - [Examples](#examples)
-- [Contributing](#contributing)
-- [License](#license) -->
+- [Documentation](#documentation)
+- [Examples](#examples)
+- [License](#license)
 
 ## Features
 
@@ -36,24 +38,24 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-athena = "0.1.0"
+athena = "0.2.0"
 
 # Optional features
-athena = { version = "0.1.0", features = ["gpu"] }      # Full GPU support (requires OpenCL)
-athena = { version = "0.1.0", features = ["gpu-mock"] }  # GPU API without OpenCL dependency
+athena = { version = "0.2.0", features = ["gpu"] }       # GPU support through OpenCL
+athena = { version = "0.2.0", features = ["gpu-mock"] }  # GPU API without the OpenCL dependency
 ```
 
-### GPU Support Options
+### GPU support
 
-- `gpu` - Full GPU acceleration with OpenCL (requires OpenCL drivers)
-- `gpu-mock` - GPU API with mock backend (no OpenCL required, useful for development/testing)
+GPU work goes through OpenCL. The backend picks an Intel Arc device first, then falls
+back to NVIDIA, AMD, or whatever else the platform reports. Matrix multiplication,
+element-wise ops and the activation functions have kernels; everything else stays on CPU.
 
-For Windows users having issues with OpenCL, see [Windows Setup Guide](docs/WINDOWS_SETUP.md).
+- `gpu` needs OpenCL drivers installed
+- `gpu-mock` gives you the same API without the OpenCL dependency, which is what you
+  want for CI or for building on a machine with no SDK
 
-**Note:** The `gpu-mock` feature allows you to build and test GPU-accelerated code without OpenCL installed. This is particularly useful for:
-- Windows development without OpenCL SDK
-- CI/CD pipelines
-- Testing GPU API without hardware
+OpenCL on Windows is fiddly; see the [Windows Setup Guide](docs/WINDOWS_SETUP.md).
 
 ## Usage
 
@@ -183,15 +185,31 @@ In this example, the agent learns to always move right in order to maximize its 
 
 ## Documentation
 
-Comprehensive documentation is available:
+Run `cargo doc --open` for the API reference. The guides live in `docs/`:
 
-- [API Documentation](https://docs.rs/athena) - Full API reference (or run `cargo doc --open`)
-- [Project Status](PROJECT_STATUS.md) - Implementation status, examples, and roadmap
-- [COUP Analysis](COUP_ANALYSIS.md) - Counterfactual reasoning in multi-agent systems
-- [Multi-Agent Extension](MULTI_AGENT_EXTENSION_PLAN.md) - Detailed multi-agent RL plans
+- [Getting Started](docs/tutorial_getting_started.md) - the basics
+- [Advanced Tutorial](docs/tutorial_advanced.md) - custom layers, multi-agent, performance
+- [Algorithms Guide](docs/algorithms_guide.md) - what each algorithm is for
+- [Performance Guide](docs/performance_guide.md) - optimization tips
+- [Best Practices](docs/best_practices.md) - recommended patterns
 
-### Tutorials (in `docs/` directory)
-- [Getting Started Tutorial](docs/tutorial_getting_started.md) - Learn the basics
-- [Advanced Tutorial](docs/tutorial_advanced.md) - Deep dive into advanced features
-- [Algorithms Guide](docs/algorithms_guide.md) - Overview of RL algorithms
-- [Performance Guide](docs/performance_guide.md) - Optimization tips
+## Examples
+
+Everything in `examples/` runs with `cargo run --example <name>`:
+
+- `grid_navigation` - DQN on a small grid world
+- `cartpole_simple` - classic control
+- `mountain_car_working` - sparse reward environment
+- `cartpole_ppo` - PPO
+- `pendulum_sac` - SAC on continuous control
+- `masked_cartpole` - action masking
+- `belief_tracking` - partially observable environment
+
+## License
+
+Dual licensed under either
+
+- MIT ([LICENSE-MIT](LICENSE-MIT))
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.

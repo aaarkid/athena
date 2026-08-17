@@ -15,9 +15,9 @@ Documentation for Athena, a deep learning library for Rust with a focus on reinf
 - [Windows Setup](WINDOWS_SETUP.md) - Installation guide for Windows users
 
 ## GPU Support
-- [Intel Arc GPU Support](gpu/INTEL_ARC_GPU_SUPPORT.md) - Intel Arc GPU acceleration
-- [GPU Implementation Summary](gpu/GPU_IMPLEMENTATION_SUMMARY.md) - Technical details
-- [GPU Investigation](gpu/GPU_INVESTIGATION.md) - Development notes
+Build with `--features gpu` for OpenCL, or `--features gpu-mock` to compile against the
+same API without OpenCL installed. See the [Windows Setup](WINDOWS_SETUP.md) guide for
+driver notes.
 
 ## API Reference
 Run `cargo doc --open` to view the full API documentation.
