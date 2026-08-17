@@ -21,8 +21,12 @@
 //!
 //! ## Guides
 //!
-//! - [Algorithm Selection](tutorials::algorithms) - choosing an algorithm
-//! - [Performance Guide](tutorials::performance) - what costs what
+//! Every code sample in these is compiled by `cargo test`.
+//!
+//! - [Getting Started](docs::getting_started) - the basics at more length
+//! - [Algorithms Guide](docs::algorithms_guide) - the five algorithms and how each is called
+//! - [Best Practices](docs::best_practices) - what to check when an agent will not learn
+//! - [Advanced Tutorial](docs::advanced) - writing a layer, multi-agent, partial observability
 //! - [GPU Acceleration](gpu) - OpenCL backend, and what the mock does not do
 //!
 //! ## Features
@@ -126,6 +130,12 @@ pub mod docs {
 
     #[doc = include_str!("../docs/tutorial_getting_started.md")]
     pub mod getting_started {}
+
+    #[doc = include_str!("../docs/tutorial_advanced.md")]
+    pub mod advanced {}
+
+    #[doc = include_str!("../docs/best_practices.md")]
+    pub mod best_practices {}
 }
 pub mod types;
 pub mod visualization;

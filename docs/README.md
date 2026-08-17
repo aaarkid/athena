@@ -39,5 +39,13 @@ cargo doc --no-deps --open
 
 ### Markdown guides
 
-The guides in this directory (tutorials, algorithms, performance, best practices)
-are also available as modules under `athena::tutorials` in the generated docs.
+The guides in this directory are included in the crate documentation under
+`athena::docs`, with `#[doc = include_str!]`. That means **every fenced `rust` block in
+them is compiled by `cargo test`**, so a sample cannot drift from the API without the
+build failing.
+
+If you add a block, tag output and math fences `text`: rustdoc treats a bare fence as
+Rust and tries to compile it.
+
+`athena::tutorials` holds a second, older copy of some of the same material as module
+documentation.
