@@ -165,3 +165,88 @@ fn the_layer_default_forward_into_matches_its_forward() {
         assert!((x - y).abs() < 1e-6);
     }
 }
+
+#[test]
+fn a_soft_update_at_tau_one_copies_and_at_tau_zero_does_nothing() {
+    let source = network();
+    let mut target = network();
+    let before = target.layers[0].weights.clone();
+
+    target.soft_update_from(&source, 0.0);
+    assert_eq!(target.layers[0].weights, before, "tau 0.0 changed the target");
+
+    target.soft_update_from(&source, 1.0);
+    for (layer, source_layer) in target.layers.iter().zip(source.layers.iter()) {
+        assert_eq!(layer.weights, source_layer.weights, "tau 1.0 did not copy exactly");
+        assert_eq!(layer.biases, source_layer.biases);
+    }
+}
+
+#[test]
+fn a_soft_update_moves_the_stated_fraction_of_the_way() {
+    let source = network();
+    let mut target = network();
+    let before = target.layers[1].weights.clone();
+    let tau = 0.25;
+
+    target.soft_update_from(&source, tau);
+
+    let expected = &before * (1.0 - tau) + &source.layers[1].weights * tau;
+    for (a, b) in target.layers[1].weights.iter().zip(expected.iter()) {
+        assert!((a - b).abs() < 1e-6, "{} vs {}", a, b);
+    }
+}
+
+#[test]
+fn a_target_network_carries_no_optimizer_state() {
+    use crate::agent::DqnAgent;
+    use crate::optimizer::Adam;
+    use crate::replay_buffer::Experience;
+
+    let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+    let mut agent = DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 100, true);
+
+    assert!(
+        matches!(agent.target_network.optimizer, OptimizerWrapper::SGD(_)),
+        "the target network was given a copy of the trained network's optimizer"
+    );
+
+    let experiences: Vec<Experience> = (0..8)
+        .map(|i| Experience {
+            state: Array1::from_shape_fn(4, |j| (i + j) as f32 * 0.1),
+            action: i % 3,
+            reward: 0.25,
+            next_state: Array1::from_shape_fn(4, |j| (i * 2 + j) as f32 * 0.05),
+            done: i % 4 == 0,
+        })
+        .collect();
+
+    // Enough steps to cross the target update threshold many times over
+    for _ in 0..2000 {
+        let batch: Vec<&Experience> = experiences.iter().collect();
+        agent.train_on_batch(&batch, 0.99, 1e-3).unwrap();
+    }
+
+    assert!(
+        matches!(agent.target_network.optimizer, OptimizerWrapper::SGD(_)),
+        "a target update replaced the target network's optimizer"
+    );
+}
+
+#[test]
+fn a_hard_target_update_copies_the_parameters_and_nothing_else() {
+    let mut source = network();
+    let mut target = source.clone_as_target();
+
+    // Move the source away from the target
+    let inputs = Array2::from_shape_fn((4, 4), |(i, j)| (i as f32) - (j as f32) * 0.3);
+    let targets = Array2::from_shape_fn((4, 3), |(i, j)| ((i + j) as f32).sin());
+    source.train_minibatch(inputs.view(), targets.view(), 0.05);
+    assert_ne!(target.layers[0].weights, source.layers[0].weights);
+
+    target.copy_parameters_from(&source);
+    for (a, b) in target.layers.iter().zip(source.layers.iter()) {
+        assert_eq!(a.weights, b.weights);
+        assert_eq!(a.biases, b.biases);
+    }
+}

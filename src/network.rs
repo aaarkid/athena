@@ -27,7 +27,7 @@
 //! - **Serialization**: Save and load trained models
 //! - **Optimizer Integration**: Works with any optimizer implementing the Optimizer trait
 
-use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2, Zip};
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -321,6 +321,58 @@ impl NeuralNetwork {
     ) {
         let _ = self.forward_batch(inputs);
         self.apply_output_errors(output_errors, learning_rate);
+    }
+
+    /// Move this network's parameters a fraction `tau` of the way toward `source`.
+    ///
+    /// `tau` 1.0 copies `source` exactly, 0.0 leaves this network untouched. Written in
+    /// place, so nothing is allocated, and the optimizer state is left alone: a target
+    /// network is assigned to, never trained.
+    ///
+    /// Layers past the end of `source` are not touched.
+    pub fn soft_update_from(&mut self, source: &NeuralNetwork, tau: f32) {
+        if tau >= 1.0 {
+            self.copy_parameters_from(source);
+            return;
+        }
+        if tau <= 0.0 {
+            return;
+        }
+
+        for (target, source) in self.layers.iter_mut().zip(source.layers.iter()) {
+            Zip::from(&mut target.weights)
+                .and(&source.weights)
+                .for_each(|t, &s| *t += tau * (s - *t));
+            Zip::from(&mut target.biases)
+                .and(&source.biases)
+                .for_each(|t, &s| *t += tau * (s - *t));
+        }
+    }
+
+    /// Copy `source`'s weights and biases into this network's existing arrays.
+    ///
+    /// Neither the optimizer state nor the layer caches come across, and nothing is
+    /// reallocated. This is what a hard target update wants; cloning the whole network
+    /// copies Adam's moment estimates for every parameter as well, for a network that is
+    /// never trained.
+    pub fn copy_parameters_from(&mut self, source: &NeuralNetwork) {
+        for (target, source) in self.layers.iter_mut().zip(source.layers.iter()) {
+            target.weights.assign(&source.weights);
+            target.biases.assign(&source.biases);
+        }
+    }
+
+    /// A copy of this network set up to serve as a target network.
+    ///
+    /// Same architecture and same starting parameters, but no forward-pass caches and a
+    /// plain SGD optimizer holding no state.
+    pub fn clone_as_target(&self) -> NeuralNetwork {
+        let mut copy = self.clone();
+        copy.optimizer = OptimizerWrapper::SGD(crate::optimizer::SGD::new());
+        for layer in copy.layers.iter_mut() {
+            layer.clear_caches();
+        }
+        copy
     }
 
     /// Backpropagate an error signal through the caches the last forward pass wrote,

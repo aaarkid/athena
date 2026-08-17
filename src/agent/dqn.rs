@@ -112,8 +112,9 @@ impl DqnAgent {
         activations.push(Activation::Linear);
         
         // Create main and target networks
-        let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer.clone());
-        let target_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
+        let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
+        // The target network is only ever assigned to, so it holds no optimizer state
+        let target_network = q_network.clone_as_target();
         
         let rng = default_rng();
         
@@ -201,7 +202,9 @@ impl DqnAgent {
     
     /// Update target network weights from main network
     pub fn update_target_network(&mut self) {
-        self.target_network = self.q_network.clone();
+        // Assigns into the arrays the target network already owns. Cloning the whole
+        // network would also copy the optimizer state and the forward-pass caches.
+        self.target_network.copy_parameters_from(&self.q_network);
     }
     
     /// Train the agent on a batch of experiences
@@ -526,8 +529,8 @@ impl DqnAgentBuilder {
             }
             
             // Create networks with custom activations
-            let q_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer.clone());
-            let target_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer);
+            let q_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer);
+            let target_network = q_network.clone_as_target();
             
             Ok(DqnAgent {
                 q_network,

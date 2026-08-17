@@ -146,8 +146,9 @@ impl SACAgent {
 
         let q1 = NeuralNetwork::new(&q_sizes, &q_activations, optimizer.clone());
         let q2 = NeuralNetwork::new(&q_sizes, &q_activations, optimizer);
-        let q1_target = q1.clone();
-        let q2_target = q2.clone();
+        // Target networks are only ever assigned to, so they hold no optimizer state
+        let q1_target = q1.clone_as_target();
+        let q2_target = q2.clone_as_target();
 
         let target_entropy = -(action_size as f32);
 
@@ -429,17 +430,8 @@ impl SACAgent {
 
     /// Soft update target networks
     fn soft_update(&mut self) {
-        // Update Q1 target
-        for (target, source) in self.q1_target.layers.iter_mut().zip(self.q1.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
-
-        // Update Q2 target
-        for (target, source) in self.q2_target.layers.iter_mut().zip(self.q2.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
+        self.q1_target.soft_update_from(&self.q1, self.tau);
+        self.q2_target.soft_update_from(&self.q2, self.tau);
     }
 
     /// Save agent to disk

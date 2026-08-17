@@ -57,6 +57,16 @@ impl DenseLayer {
         self
     }
 
+    /// Drop what the last forward pass stored for the backward pass.
+    ///
+    /// A layer that has been cleared cannot be backpropagated through until the next
+    /// forward pass. Worth doing before cloning or saving a network that is only going
+    /// to be used for inference: the caches are as large as the batch that wrote them.
+    pub fn clear_caches(&mut self) {
+        self.inputs = None;
+        self.pre_activation_output = None;
+    }
+
     pub fn with_biases(mut self, biases: Array1<f32>) -> Self {
         assert_eq!(biases.dim(), self.biases.dim());
         self.biases = biases;
