@@ -1,602 +1,520 @@
-# Athena Best Practices Guide
+# Best Practices
 
-This guide covers best practices for using the Athena reinforcement learning library effectively, including code organization, training strategies, and common pitfalls to avoid.
+Advice that has cost this repository something to learn, with code that compiles.
 
-## Table of Contents
+Every Rust block here is a doctest. If one drifts from the API, `cargo test` fails.
 
-1. [Project Structure](#project-structure)
-2. [Code Organization](#code-organization)
-3. [Training Best Practices](#training-best-practices)
-4. [Debugging Strategies](#debugging-strategies)
-5. [Testing and Validation](#testing-and-validation)
-6. [Production Deployment](#production-deployment)
+## Contents
 
-## Project Structure
+1. [Project layout](#project-layout)
+2. [Configuration](#configuration)
+3. [The training loop](#the-training-loop)
+4. [Exploration](#exploration)
+5. [Rewards](#rewards)
+6. [Observations](#observations)
+7. [Debugging: what to check first](#debugging-what-to-check-first)
+8. [Testing an agent](#testing-an-agent)
+9. [Checkpoints](#checkpoints)
+10. [Inference in a shipped build](#inference-in-a-shipped-build)
 
-### Recommended Directory Layout
+## Project layout
 
 ```text
 my_rl_project/
 ├── Cargo.toml
 ├── src/
-│   ├── main.rs              # Entry point
-│   ├── environment/         # Environment implementations
-│   │   ├── mod.rs
-│   │   ├── cartpole.rs
-│   │   └── traits.rs
-│   ├── training/            # Training loops and utilities
-│   │   ├── mod.rs
-│   │   ├── trainer.rs
-│   │   └── metrics.rs
-│   ├── config/              # Configuration management
-│   │   ├── mod.rs
-│   │   └── hyperparameters.rs
-│   └── utils/               # Helper functions
-│       ├── mod.rs
-│       └── visualization.rs
-├── models/                  # Saved models
-├── logs/                    # Training logs
-├── data/                    # Datasets or recordings
-└── tests/                   # Integration tests
+│   ├── main.rs              # entry point
+│   ├── environment/         # your environments, and wrappers over them
+│   ├── training/            # the loop, and metrics
+│   └── config/              # hyperparameters
+├── models/                  # saved agents
+└── tests/
 ```
 
-### Configuration Management
+The one non-obvious thing: keep the environment and the agent in separate modules with no
+shared types beyond `Array1<f32>` and `usize`. Every time they get entangled, swapping the
+algorithm becomes a rewrite.
 
-Use a configuration struct for hyperparameters:
+## Configuration
+
+Put the hyperparameters in one struct and serialize it next to the model. Six months later
+the only way to know what produced a checkpoint is to have written it down.
 
 ```rust
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TrainingConfig {
-    // Network architecture
     pub layer_sizes: Vec<usize>,
-    pub activation: String,
-    
-    // Training hyperparameters
+
     pub learning_rate: f32,
     pub batch_size: usize,
     pub buffer_size: usize,
     pub gamma: f32,
-    
-    // Algorithm specific
+
     pub epsilon_start: f32,
     pub epsilon_end: f32,
     pub epsilon_decay: f32,
-    
-    // Training schedule
+
     pub max_episodes: usize,
     pub eval_frequency: usize,
-    pub save_frequency: usize,
+    /// Fixed, so a run reproduces
+    pub seed: u64,
 }
 
-impl TrainingConfig {
-    pub fn from_file(path: &str) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&contents)?;
-        Ok(config)
-    }
-}
-```
-
-## Code Organization
-
-### 1. Environment Abstraction
-
-Define a clean environment interface:
-
-```rust
-use athena::error::Result;
-
-pub trait Environment {
-    type State;
-    type Action;
-    
-    fn reset(&mut self) -> Self::State;
-    fn step(&mut self, action: Self::Action) -> (Self::State, f32, bool);
-    fn render(&self) -> Result<()>;
-    fn close(&mut self);
-    
-    fn state_dim(&self) -> usize;
-    fn action_dim(&self) -> usize;
-}
-
-// Implement wrapper for compatibility
-pub struct AthenaEnvWrapper<E: Environment> {
-    env: E,
-}
-
-impl<E: Environment> AthenaEnvWrapper<E> {
-    pub fn new(env: E) -> Self {
-        Self { env }
-    }
-    
-    pub fn to_athena_state(&self, state: E::State) -> Array1<f32> {
-        // Convert environment state to Athena format
-    }
-}
-```
-
-### 2. Training Loop Structure
-
-Organize training code into reusable components:
-
-```rust
-pub struct Trainer<E: Environment> {
-    agent: DqnAgent,
-    env: E,
-    buffer: ReplayBuffer,
-    config: TrainingConfig,
-    metrics: MetricsTracker,
-}
-
-impl<E: Environment> Trainer<E> {
-    pub fn train(&mut self) -> Result<()> {
-        for episode in 0..self.config.max_episodes {
-            self.run_episode()?;
-            
-            if episode % self.config.eval_frequency == 0 {
-                self.evaluate()?;
-            }
-            
-            if episode % self.config.save_frequency == 0 {
-                self.save_checkpoint(episode)?;
-            }
-        }
-        Ok(())
-    }
-    
-    fn run_episode(&mut self) -> Result<f32> {
-        let mut state = self.env.reset();
-        let mut total_reward = 0.0;
-        
-        loop {
-            // Select action
-            let action = self.agent.act(&state)?;
-            
-            // Environment step
-            let (next_state, reward, done) = self.env.step(action);
-            
-            // Store experience
-            self.buffer.add(Experience {
-                state: state.clone(),
-                action,
-                reward,
-                next_state: next_state.clone(),
-                done,
-            });
-            
-            // Train if enough samples
-            if self.buffer.len() >= self.config.batch_size {
-                self.train_step()?;
-            }
-            
-            total_reward += reward;
-            state = next_state;
-            
-            if done {
-                break;
-            }
-        }
-        
-        self.metrics.add_episode_reward(total_reward);
-        Ok(total_reward)
-    }
-}
-```
-
-### 3. Metrics and Logging
-
-Implement comprehensive logging:
-
-```rust
-use std::fs::File;
-use std::io::Write;
-
-pub struct MetricsLogger {
-    log_file: File,
-    tensorboard: Option<TensorboardWriter>,
-}
-
-impl MetricsLogger {
-    pub fn log_scalar(&mut self, name: &str, value: f32, step: usize) {
-        // Write to file
-        writeln!(self.log_file, "{},{},{}", step, name, value).unwrap();
-        
-        // Write to tensorboard if available
-        if let Some(tb) = &mut self.tensorboard {
-            tb.add_scalar(name, value, step);
+impl Default for TrainingConfig {
+    fn default() -> Self {
+        TrainingConfig {
+            layer_sizes: vec![4, 64, 64, 2],
+            learning_rate: 1e-3,
+            batch_size: 64,
+            buffer_size: 20_000,
+            gamma: 0.99,
+            epsilon_start: 1.0,
+            epsilon_end: 0.05,
+            epsilon_decay: 0.995,
+            max_episodes: 1000,
+            eval_frequency: 50,
+            seed: 7,
         }
     }
-    
-    pub fn log_histogram(&mut self, name: &str, values: &[f32], step: usize) {
-        // Log distribution of values
-    }
 }
+
+let config = TrainingConfig::default();
+assert_eq!(config.layer_sizes.first(), Some(&4));
 ```
 
-## Training Best Practices
+## The training loop
 
-### 1. Exploration Strategies
-
-Implement proper exploration decay:
+Four things in order, every step: act, store, sample, train. Then once per episode, decay.
 
 ```rust
-pub struct ExplorationSchedule {
-    start: f32,
-    end: f32,
-    decay_steps: usize,
-}
+use athena::agent::DqnAgent;
+use athena::metrics::MetricsTracker;
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::replay_buffer::{Experience, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::Array1;
 
-impl ExplorationSchedule {
-    pub fn get_epsilon(&self, step: usize) -> f32 {
-        if step >= self.decay_steps {
-            self.end
-        } else {
-            let progress = step as f32 / self.decay_steps as f32;
-            self.start + (self.end - self.start) * progress
-        }
-    }
-    
-    // Alternative: Exponential decay
-    pub fn get_epsilon_exp(&self, step: usize) -> f32 {
-        let decay_rate = (self.end / self.start).powf(1.0 / self.decay_steps as f32);
-        (self.start * decay_rate.powf(step as f32)).max(self.end)
-    }
-}
-```
+// Adam, not SGD. A squared error on Q-values of any real magnitude diverges under a
+// plain gradient step; Pendulum's return of around -1600 does it within a few thousand
+// steps.
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let mut agent = DqnAgent::new_seeded(&[4, 64, 64, 2], 1.0, optimizer, 200, true, 7);
 
-### 2. Reward Shaping
+let mut buffer = ReplayBuffer::new(20_000);
+let mut metrics = MetricsTracker::new(3, 100);
+let mut rng = seeded_rng(11);
 
-Design informative rewards:
+for _episode in 0..2 {
+    let mut state: Array1<f32> = Array1::zeros(4);
+    metrics.start_episode();
 
-```rust
-pub fn shape_reward(
-    state: &State,
-    action: Action,
-    next_state: &State,
-    base_reward: f32,
-) -> f32 {
-    let mut shaped_reward = base_reward;
-    
-    // Example: Encourage forward progress
-    let progress = next_state.position - state.position;
-    shaped_reward += 0.1 * progress;
-    
-    // Example: Penalize energy usage
-    let energy_cost = action.magnitude() * 0.01;
-    shaped_reward -= energy_cost;
-    
-    // Clip to prevent exploitation
-    shaped_reward.clamp(-1.0, 1.0)
-}
-```
+    for _step in 0..8 {
+        let action = agent.act(state.view()).expect("state width matches");
 
-### 3. State Preprocessing
+        // ... your environment ...
+        let (next_state, reward, done) = (Array1::<f32>::zeros(4), 1.0f32, false);
+        metrics.step(reward);
 
-Normalize and augment states:
-
-```rust
-pub struct StatePreprocessor {
-    running_mean: Array1<f32>,
-    running_std: Array1<f32>,
-    count: usize,
-}
-
-impl StatePreprocessor {
-    pub fn update(&mut self, state: &Array1<f32>) {
-        // Update running statistics
-        self.count += 1;
-        let delta = state - &self.running_mean;
-        self.running_mean += &delta / self.count as f32;
-        let delta2 = state - &self.running_mean;
-        self.running_std = ((self.running_std.mapv(|x| x * x) * (self.count - 1) as f32
-            + &delta * &delta2) / self.count as f32).mapv(f32::sqrt);
-    }
-    
-    pub fn normalize(&self, state: &Array1<f32>) -> Array1<f32> {
-        (state - &self.running_mean) / (&self.running_std + 1e-8)
-    }
-}
-```
-
-### 4. Curriculum Learning
-
-Gradually increase task difficulty:
-
-```rust
-pub struct CurriculumSchedule {
-    stages: Vec<TaskDifficulty>,
-    success_threshold: f32,
-    window_size: usize,
-}
-
-impl CurriculumSchedule {
-    pub fn get_current_difficulty(&self, recent_rewards: &[f32]) -> TaskDifficulty {
-        if recent_rewards.len() < self.window_size {
-            return self.stages[0].clone();
-        }
-        
-        let avg_reward = recent_rewards.iter().sum::<f32>() / recent_rewards.len() as f32;
-        
-        for (i, stage) in self.stages.iter().enumerate() {
-            if avg_reward < stage.threshold {
-                return stage.clone();
-            }
-        }
-        
-        self.stages.last().unwrap().clone()
-    }
-}
-```
-
-## Debugging Strategies
-
-### 1. Sanity Checks
-
-Implement debugging utilities:
-
-```rust
-pub fn sanity_check_agent(agent: &mut DqnAgent) -> Result<()> {
-    // Check 1: Network outputs are in valid range
-    let dummy_state = Array1::zeros(agent.state_dim());
-    let q_values = agent.q_network.forward(dummy_state.view());
-    assert!(q_values.iter().all(|&v| v.is_finite()));
-    
-    // Check 2: Agent can act
-    let action = agent.act(dummy_state.view())?;
-    assert!(action < agent.action_dim());
-    
-    // Check 3: Training doesn't explode
-    let mut buffer = ReplayBuffer::new(100);
-    for _ in 0..100 {
         buffer.add(Experience {
-            state: Array1::zeros(agent.state_dim()),
-            action: 0,
-            reward: 1.0,
-            next_state: Array1::zeros(agent.state_dim()),
-            done: false,
+            state: state.clone(),
+            action,
+            reward,
+            next_state: next_state.clone(),
+            done,
         });
-    }
-    
-    let batch = buffer.sample(32);
-    agent.train_on_batch(&batch, 0.001)?;
-    
-    println!("All sanity checks passed!");
-    Ok(())
-}
-```
 
-### 2. Visualization Tools
-
-Create debugging visualizations:
-
-```rust
-pub fn plot_q_values(agent: &mut DqnAgent, states: &[Array1<f32>]) {
-    let mut q_values = vec![];
-    
-    for state in states {
-        let qs = agent.q_network.forward(state.view());
-        q_values.push(qs);
-    }
-    
-    // Plot Q-value distributions
-    // Use a plotting library like plotters
-}
-
-pub fn visualize_policy(agent: &mut DqnAgent, env: &impl Environment) {
-    // Create a grid of states
-    // For each state, show the preferred action
-    // Useful for 2D environments
-}
-```
-
-### 3. Common Issues and Solutions
-
-| Issue | Symptoms | Solution |
-|-------|----------|----------|
-| Exploding Q-values | Loss → ∞, NaN values | Reduce learning rate, clip gradients |
-| No learning | Flat reward curve | Increase exploration, check reward scale |
-| Catastrophic forgetting | Performance drops suddenly | Larger replay buffer, reduce learning rate |
-| Slow convergence | Very gradual improvement | Increase learning rate, better initialization |
-| High variance | Unstable training curve | Larger batch size, target network |
-
-## Testing and Validation
-
-### 1. Unit Tests for Components
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_replay_buffer_capacity() {
-        let mut buffer = ReplayBuffer::new(100);
-        
-        for i in 0..150 {
-            buffer.add(create_dummy_experience(i));
+        // (experiences, gamma, learning_rate). Getting gamma and the rate the wrong way
+        // round is silent: both are small floats.
+        if buffer.len() >= 4 {
+            let batch = buffer.sample_with(4, &mut rng);
+            let loss = agent.train_on_batch(&batch, 0.99, 1e-3).expect("shapes match");
+            metrics.record_loss(loss);
         }
-        
-        assert_eq!(buffer.len(), 100);
-        assert_eq!(buffer.sample(1)[0].state[0], 50.0);
-    }
-    
-    #[test]
-    fn test_exploration_schedule() {
-        let schedule = ExplorationSchedule {
-            start: 1.0,
-            end: 0.01,
-            decay_steps: 1000,
-        };
-        
-        assert_eq!(schedule.get_epsilon(0), 1.0);
-        assert_eq!(schedule.get_epsilon(1000), 0.01);
-        assert!(schedule.get_epsilon(500) < 1.0);
-        assert!(schedule.get_epsilon(500) > 0.01);
-    }
-}
-```
 
-### 2. Integration Tests
-
-```rust
-#[test]
-fn test_full_training_loop() {
-    let config = TrainingConfig {
-        max_episodes: 10,
-        // ... other config
-    };
-    
-    let env = DummyEnvironment::new();
-    let agent = create_test_agent();
-    let mut trainer = Trainer::new(agent, env, config);
-    
-    let result = trainer.train();
-    assert!(result.is_ok());
-    
-    // Check that agent improved
-    let final_reward = trainer.evaluate().unwrap();
-    assert!(final_reward > 0.0);
-}
-```
-
-### 3. Benchmark Tests
-
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
-fn benchmark_forward_pass(c: &mut Criterion) {
-    let network = create_test_network();
-    let input = Array1::zeros(100);
-    
-    c.bench_function("forward_pass", |b| {
-        b.iter(|| {
-            black_box(network.forward(input.view()));
-        });
-    });
-}
-
-criterion_group!(benches, benchmark_forward_pass);
-criterion_main!(benches);
-```
-
-## Production Deployment
-
-### 1. Model Serialization
-
-```rust
-use std::path::Path;
-
-pub fn save_training_state(
-    agent: &DqnAgent,
-    optimizer_state: &OptimizerState,
-    episode: usize,
-    path: &Path,
-) -> Result<()> {
-    let state = TrainingState {
-        agent: agent.clone(),
-        optimizer: optimizer_state.clone(),
-        episode,
-        timestamp: SystemTime::now(),
-    };
-    
-    let encoded = bincode::serialize(&state)?;
-    std::fs::write(path, encoded)?;
-    
-    // Also save metadata
-    let metadata = StateMetadata {
-        version: env!("CARGO_PKG_VERSION"),
-        git_hash: env!("GIT_HASH"),
-        hyperparameters: config.clone(),
-    };
-    
-    let meta_path = path.with_extension("meta.json");
-    std::fs::write(meta_path, serde_json::to_string_pretty(&metadata)?)?;
-    
-    Ok(())
-}
-```
-
-### 2. Inference Optimization
-
-```rust
-pub struct InferenceAgent {
-    network: NeuralNetwork,
-    preprocessor: StatePreprocessor,
-}
-
-impl InferenceAgent {
-    pub fn from_checkpoint(path: &str) -> Result<Self> {
-        let agent = DqnAgent::load(path)?;
-        Ok(Self {
-            network: agent.q_network,
-            preprocessor: StatePreprocessor::load(path)?,
-        })
-    }
-    
-    pub fn act(&mut self, raw_state: &Array1<f32>) -> usize {
-        // Preprocess
-        let state = self.preprocessor.normalize(raw_state);
-        
-        // Forward pass
-        let q_values = self.network.forward(state.view());
-        
-        // Argmax (no exploration in production)
-        q_values.argmax().unwrap()
-    }
-}
-```
-
-### 3. Monitoring in Production
-
-```rust
-pub struct ProductionMonitor {
-    action_counts: HashMap<usize, usize>,
-    response_times: Vec<Duration>,
-    state_statistics: StateStatistics,
-}
-
-impl ProductionMonitor {
-    pub fn log_inference(&mut self, state: &Array1<f32>, action: usize, duration: Duration) {
-        *self.action_counts.entry(action).or_insert(0) += 1;
-        self.response_times.push(duration);
-        self.state_statistics.update(state);
-        
-        // Alert if anomalies detected
-        if self.is_anomalous(state) {
-            self.send_alert("Anomalous state detected");
+        state = next_state;
+        if done {
+            break;
         }
     }
-    
-    fn is_anomalous(&self, state: &Array1<f32>) -> bool {
-        // Check if state is outside normal range
-        let z_scores = (state - &self.state_statistics.mean) / &self.state_statistics.std;
-        z_scores.iter().any(|&z| z.abs() > 3.0)
-    }
+
+    metrics.end_episode();
+    agent.decay_epsilon(0.995, 0.05);
 }
+
+assert!(metrics.avg_episode_reward(10).is_some());
 ```
 
-## Code Quality Checklist
+Two things that are easy to get wrong here:
 
-- [ ] All public APIs have documentation
-- [ ] Complex algorithms have inline comments
-- [ ] Error handling uses `Result` types
-- [ ] No `.unwrap()` in production code
-- [ ] Constants are named and documented
-- [ ] Tests cover edge cases
-- [ ] Benchmarks track performance
-- [ ] Examples demonstrate usage
-- [ ] README includes quickstart
-- [ ] CHANGELOG tracks versions
+- **`sample_with` takes a generator.** `sample` uses a fresh one, so a run does not
+  reproduce. Pass a seeded generator when you need it to.
+- **Train every step, not every episode.** One gradient step per environment step is the
+  usual ratio. Training once per episode wastes most of the buffer.
 
-## Summary
+## Exploration
 
-Following these best practices will help you:
-1. Build maintainable RL projects
-2. Debug issues efficiently
-3. Train agents effectively
-4. Deploy models safely
-5. Monitor production systems
+Decay per episode, and keep a floor above zero. `DqnAgent::decay_epsilon` does both.
 
-Remember that RL is experimental by nature - always validate your results and be prepared to iterate on your approach!
+```rust
+use athena::agent::DqnAgent;
+use athena::optimizer::{OptimizerWrapper, SGD};
+
+let mut agent = DqnAgent::new(&[4, 16, 2], 1.0, OptimizerWrapper::SGD(SGD::new()), 100, true);
+
+for _episode in 0..1000 {
+    agent.decay_epsilon(0.995, 0.05);
+}
+
+// Exponential decay reaches the floor and stops there
+assert!((agent.epsilon - 0.05).abs() < 1e-6);
+```
+
+If you want linear decay instead, compute it and call `update_epsilon`:
+
+```rust
+# use athena::agent::DqnAgent;
+# use athena::optimizer::{OptimizerWrapper, SGD};
+# let mut agent = DqnAgent::new(&[4, 16, 2], 1.0, OptimizerWrapper::SGD(SGD::new()), 100, true);
+let (start, end, decay_episodes) = (1.0f32, 0.05f32, 500.0f32);
+
+for episode in 0..1000 {
+    let progress = (episode as f32 / decay_episodes).min(1.0);
+    agent.update_epsilon(start + (end - start) * progress);
+}
+assert!((agent.epsilon - end).abs() < 1e-6);
+```
+
+The floor matters more than the schedule. At epsilon 0 a policy that has settled on a bad
+action never sees the alternative again.
+
+## Rewards
+
+Keep the scale small. A goal reward of 100 against a step cost of 1 makes the Q-values
+large enough that training becomes fragile; the same task at 1.0 and 0.01 learns in a
+fraction of the episodes.
+
+```rust
+/// Reward, plus a shaping term, clipped.
+fn shape_reward(position: f32, next_position: f32, base_reward: f32, effort: f32) -> f32 {
+    let mut reward = base_reward;
+
+    // Encourage progress toward the goal
+    reward += 0.1 * (next_position - position);
+
+    // Discourage flailing
+    reward -= 0.01 * effort;
+
+    // f32::clamp passes NaN straight through, so check finiteness first or a single bad
+    // step poisons the network permanently
+    if reward.is_finite() {
+        reward.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+assert_eq!(shape_reward(0.0, 1.0, 1.0, 0.0), 1.0);
+assert_eq!(shape_reward(0.0, 0.0, f32::NAN, 0.0), 0.0);
+```
+
+Shaping terms are also how an agent learns to exploit you. Clip, and check that the
+shaped total still peaks at the behaviour you wanted.
+
+## Observations
+
+Get every component onto a similar scale. This is the single most common reason an agent
+does not learn, and it looks identical to a broken algorithm.
+
+Mountain Car in this repository is the worked example: velocity spans plus or minus 0.07
+against a position range of 1.8, and unscaled it was invisible to the network. Scaling it
+turned flat noise into solving the task in about 100 steps.
+
+```rust
+use ndarray::Array1;
+
+/// Running mean and variance, Welford's method, so it works in one pass.
+pub struct Preprocessor {
+    mean: Array1<f32>,
+    var: Array1<f32>,
+    count: f32,
+}
+
+impl Preprocessor {
+    pub fn new(width: usize) -> Self {
+        Preprocessor {
+            mean: Array1::zeros(width),
+            var: Array1::ones(width),
+            count: 1e-4,
+        }
+    }
+
+    pub fn observe(&mut self, state: &Array1<f32>) {
+        self.count += 1.0;
+        let delta = state - &self.mean;
+        self.mean = &self.mean + &(&delta / self.count);
+        let delta2 = state - &self.mean;
+        self.var = &self.var + &((&delta * &delta2 - &self.var) / self.count);
+    }
+
+    /// Standardize. The floor on the variance keeps a constant component from
+    /// producing NaN.
+    pub fn normalize(&self, state: &Array1<f32>) -> Array1<f32> {
+        (state - &self.mean) / self.var.mapv(|v| v.max(1e-8).sqrt())
+    }
+}
+
+let mut preprocessor = Preprocessor::new(2);
+for value in [1.0f32, 2.0, 3.0, 4.0] {
+    preprocessor.observe(&Array1::from_vec(vec![value, value * 100.0]));
+}
+
+let normalized = preprocessor.normalize(&Array1::from_vec(vec![2.5, 250.0]));
+assert!(normalized.iter().all(|v| v.is_finite() && v.abs() < 5.0));
+```
+
+If the ranges are known ahead of time, dividing by them is simpler and does not drift.
+
+## Debugging: what to check first
+
+In order, because each rules out the ones below it.
+
+1. **Does the reference test still pass?** `src/tests/test_learning.rs` trains DQN, A2C,
+   SAC, TD3 and PPO on tiny tasks with known optimal policies. If those pass, the library
+   is fine and the problem is in your environment, your observation, or your reward.
+2. **Are you evaluating with `predict` or with `act`?** `act` samples. Evaluating with it
+   measures the exploration schedule, not the policy. This was worth a 10x difference on
+   one example in this repository: a PPO agent scoring 11.7 was actually scoring 223.
+3. **Are the observation components on the same scale?**
+4. **Is the reward scale small?**
+5. **Is Adam being used, not SGD?**
+6. **Does the episode terminate?** A bootstrapped value target with no terminal state
+   feeds on itself and grows every iteration.
+
+Then a sanity check that runs in a second:
+
+```rust
+use athena::agent::DqnAgent;
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::replay_buffer::{Experience, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::Array1;
+
+fn sanity_check(agent: &mut DqnAgent) -> athena::error::Result<()> {
+    // The agent does not carry its own dimensions; the network does
+    let state_width = agent.q_network.input_size();
+    let action_count = agent.q_network.output_size();
+
+    // 1. Outputs are finite
+    let probe: Array1<f32> = Array1::zeros(state_width);
+    let q_values = agent.q_network.predict(probe.view());
+    assert!(q_values.iter().all(|v| v.is_finite()), "Q-values are not finite");
+    assert_eq!(q_values.len(), action_count);
+
+    // 2. A wrong width is reported, not a crash mid-frame
+    assert!(agent.q_network.try_predict(Array1::zeros(state_width + 1).view()).is_err());
+
+    // 3. Acting works and stays in range
+    let action = agent.act(probe.view())?;
+    assert!(action < action_count);
+
+    // 4. Training does not explode
+    let mut buffer = ReplayBuffer::new(100);
+    let mut rng = seeded_rng(3);
+    for i in 0..64 {
+        buffer.add(Experience {
+            state: Array1::from_elem(state_width, i as f32 * 0.01),
+            action: i % action_count,
+            reward: 0.5,
+            next_state: Array1::zeros(state_width),
+            done: i % 8 == 0,
+        });
+    }
+    for _ in 0..20 {
+        let batch = buffer.sample_with(32, &mut rng);
+        let loss = agent.train_on_batch(&batch, 0.99, 1e-3)?;
+        assert!(loss.is_finite(), "loss went non-finite");
+    }
+
+    Ok(())
+}
+
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let mut agent = DqnAgent::new(&[4, 32, 3], 0.1, optimizer, 100, true);
+sanity_check(&mut agent).expect("sanity check failed");
+```
+
+For a text plot of what happened, `athena::visualization::plot_reward_history` takes
+`metrics.metrics()` and returns a `String`. `athena::metrics::statistics` has the norms
+and a dead-neuron check; `athena::debug::numerical_check` finds NaN and infinity in a
+weight set.
+
+## Testing an agent
+
+Assert that the agent reaches a known optimum, not that a call returned. A test that only
+checks a loss is finite passes on a network that has learned nothing.
+
+```rust
+use athena::agent::DqnAgent;
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::replay_buffer::{Experience, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::Array1;
+
+// A corridor: action 1 moves right, action 0 left. The right end pays 1.0 and ends the
+// episode. The optimal policy is to always move right, so the test can assert exactly
+// how many steps a trained agent takes.
+const LENGTH: usize = 6;
+
+fn state_at(position: usize) -> Array1<f32> {
+    let mut state = Array1::zeros(LENGTH);
+    state[position] = 1.0;
+    state
+}
+
+fn step(position: usize, action: usize) -> (usize, f32, bool) {
+    let next = if action == 1 { (position + 1).min(LENGTH - 1) } else { position.saturating_sub(1) };
+    if next == LENGTH - 1 { (next, 1.0, true) } else { (next, 0.0, false) }
+}
+
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let mut agent = DqnAgent::new_seeded(&[LENGTH, 32, 2], 1.0, optimizer, 50, true, 9);
+let mut buffer = ReplayBuffer::new(2000);
+let mut rng = seeded_rng(9);
+
+for episode in 0..300 {
+    // Anneal, or the greedy policy is never exercised
+    agent.update_epsilon((1.0 - episode as f32 / 200.0).max(0.05));
+
+    let mut position = 0;
+    for _ in 0..(LENGTH * 3) {
+        let state = state_at(position);
+        let action = agent.act(state.view()).unwrap();
+        let (next, reward, done) = step(position, action);
+
+        buffer.add(Experience {
+            state,
+            action,
+            reward,
+            next_state: state_at(next),
+            done,
+        });
+
+        if buffer.len() >= 32 {
+            let batch = buffer.sample_with(32, &mut rng);
+            agent.train_on_batch(&batch, 0.95, 0.005).unwrap();
+        }
+
+        position = next;
+        if done {
+            break;
+        }
+    }
+}
+
+// Greedy, through predict: LENGTH - 1 steps is optimal
+let mut position = 0;
+let mut steps = 0;
+for _ in 0..(LENGTH * 4) {
+    let q_values = agent.q_network.predict(state_at(position).view());
+    let action = if q_values[1] > q_values[0] { 1 } else { 0 };
+    let (next, _, done) = step(position, action);
+    steps += 1;
+    if done {
+        break;
+    }
+    position = next;
+}
+
+assert_eq!(steps, LENGTH - 1, "greedy policy took {} steps", steps);
+```
+
+Some tests depend on random weight initialization. If one fails, run it a few times before
+assuming a regression, and fix the flakiness rather than loosening the assertion. Four
+flaky tests were found in this repository and every one was an assertion that was true on
+average rather than always. Probe a new stochastic test 8 to 15 times before trusting it.
+
+## Checkpoints
+
+`save` and `load`. `DqnAgent` does not implement `Clone`, so a checkpoint helper that
+clones the agent will not compile.
+
+```rust,no_run
+use athena::agent::DqnAgent;
+use athena::optimizer::{Adam, OptimizerWrapper};
+
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+let agent = DqnAgent::new(&[4, 64, 2], 0.1, optimizer, 200, true);
+
+// Include the episode number in the filename: the file itself does not carry it
+std::fs::create_dir_all("models").unwrap();
+agent.save("models/agent_ep1000.bin").expect("could not write the model");
+
+let mut restored = DqnAgent::load("models/agent_ep1000.bin").expect("could not read it back");
+
+// Epsilon is saved, so an agent reloaded for evaluation still explores unless you say
+// otherwise
+restored.update_epsilon(0.0);
+```
+
+What a saved file does and does not carry:
+
+- **Carried:** both networks' weights and biases, the optimizer state including Adam's
+  moment estimates, epsilon, `train_steps`, and the Double DQN and target-update settings.
+- **Not carried:** the random generator, so a loaded agent explores from a fresh one; the
+  forward-pass caches; and anything about your environment or config.
+
+The file begins with `ATHN` and a format version. A file from 0.3.x, or from another
+program, is reported rather than decoded into nonsense.
+
+## Inference in a shipped build
+
+Use `predict`. It takes `&self`, so one network behind an `Arc` serves every entity, and
+it writes no caches, so it allocates nothing per frame once the buffers are sized.
+
+```rust
+use athena::agent::DqnAgent;
+use athena::network::InferenceBuffers;
+use athena::optimizer::{OptimizerWrapper, SGD};
+use ndarray::Array1;
+use std::sync::Arc;
+
+let agent = DqnAgent::new(&[4, 64, 2], 0.0, OptimizerWrapper::SGD(SGD::new()), 200, true);
+
+// Share the trained network; drop the rest of the agent
+let policy = Arc::new(agent.q_network);
+
+// One set of buffers per thread
+let mut buffers = InferenceBuffers::new();
+let state: Array1<f32> = Array1::zeros(4);
+
+let q_values = policy.predict_into(state.view(), &mut buffers);
+let action = q_values
+    .iter()
+    .enumerate()
+    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+    .map(|(i, _)| i)
+    .unwrap();
+
+assert!(action < 2);
+```
+
+There is no `argmax` on an ndarray without `ndarray-stats`, which is not a dependency of
+this crate. The fold above is the whole of it.
+
+Two more things worth doing before shipping:
+
+- **`try_predict`, not `predict`, for anything reading state from a file, a network or a
+  save.** It returns an error on a wrong width; `predict` multiplies straight into the
+  first layer's weights, which for a game means the process dies mid-frame.
+- **Move training off the frame thread.** `examples/background_training.rs` runs the
+  learner on a worker and passes experiences over a channel.
+
+## Where to go next
+
+- [`conventions.md`](conventions.md) for shapes, weight orientation and what can be
+  stacked
+- [`quickstart.md`](quickstart.md) for the end-to-end path
+- [`tutorial_advanced.md`](tutorial_advanced.md) for writing a layer, multi-agent and
+  partial observability

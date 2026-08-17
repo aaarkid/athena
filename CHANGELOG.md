@@ -34,6 +34,12 @@ Breaking changes to the API and to the on-disk format.
 - **`MockGpuBackend` no longer inserts an artificial delay by default**, and its
   `device_info` no longer claims to be an Intel Arc. Every operation always ran on the
   CPU; the output now says so.
+- **`parallel::ParallelNetwork` borrows its network** instead of owning a copy, so it
+  carries a lifetime and `forward_batch_parallel` takes `&self`. It used to clone the
+  whole network once per row of the batch.
+- **`parallel::parallel_matmul` is deprecated in favour of `matmul`.** It was always a
+  plain `a.dot(&b)`; nothing about it was parallel.
+- **`ChunkedBatchProcessor` no longer holds an `ArrayPool`.** The field was never read.
 - **`RunningStats::variance` divides by the count, not the count minus one.** It used to
   report the sample variance while `Statistics::from_slice` reported the population
   variance, so `RunningStats::to_statistics` and `Statistics::from_slice` disagreed on
@@ -70,8 +76,13 @@ Breaking changes to the API and to the on-disk format.
   delegate to it.
 - `NetworkImporter::import_network_json(path, optimizer)`, which rebuilds a runnable
   network from an exported file. `import_json` still reads the shape only.
-- `docs/quickstart.md`, `docs/conventions.md` and `examples/game_loop_dqn.rs`. The
-  README and the guides are compiled as doctests, so their samples cannot drift.
+- `docs/quickstart.md`, `docs/conventions.md` and `examples/game_loop_dqn.rs`. The README
+  and every guide are compiled as doctests, so their samples cannot drift.
+- `NeuralNetwork::apply_gradients` is public, for gradients computed elsewhere.
+- `parallel::GradientAccumulator`, `ParallelNetwork::with_chunk_rows`,
+  `ParallelGradients::accumulate`, `ParallelReplayBuffer::sample_with` and
+  `ParallelAugmentation::augment_batch_with`.
+- `ChunkedBatchProcessor::chunk_size`, and `RunningStats::sample_variance`.
 
 ### Fixed
 
@@ -91,6 +102,17 @@ Breaking changes to the API and to the on-disk format.
   to the wrong entry. Sampling now returns stable slot ids.
 - Agents hold a seedable `StdRng` instead of `ThreadRng`, so they are `Send` and a run
   reproduces.
+- `parallel::ParallelGradients::compute_batch_gradients` now agrees with
+  `NeuralNetwork::backward_batch`, and is checked against it. The module's own tests
+  asserted output shapes only, which is how two weight-orientation bugs got in.
+- `ParallelReplayBuffer::sample_parallel` shuffled every index in the buffer to keep
+  `batch_size` of them.
+- `examples/parallel_training.rs` built an updated network from its gradients and then
+  dropped it, so its training loop never trained anything. Its benchmark also compared a
+  per-row loop against a batched parallel call, which measured two different things.
+- `docs/tutorial_advanced.md` and `docs/best_practices.md` were built on types the crate
+  does not define, and claimed runnable versions lived in `examples/`. Both are cut to
+  what exists and compiled as doctests.
 
 ### Performance
 

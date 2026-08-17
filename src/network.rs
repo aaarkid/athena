@@ -464,7 +464,13 @@ impl NeuralNetwork {
         norm
     }
 
-    fn apply_gradients(&mut self, gradients: Vec<(Array2<f32>, Array1<f32>)>, learning_rate: f32) {
+    /// Hand a set of per-layer gradients to the optimizer.
+    ///
+    /// One `(weight_gradients, bias_gradients)` pair per layer, in the network's own
+    /// order, already averaged over whatever batch produced them. This is the entry point
+    /// for gradients computed somewhere else, as `crate::parallel::ParallelGradients`
+    /// does.
+    pub fn apply_gradients(&mut self, gradients: Vec<(Array2<f32>, Array1<f32>)>, learning_rate: f32) {
         for (idx, (layer, (weight_gradients, bias_gradients))) in
             self.layers.iter_mut().zip(gradients).enumerate()
         {

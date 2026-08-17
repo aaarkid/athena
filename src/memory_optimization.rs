@@ -115,7 +115,13 @@ impl GradientAccumulator {
         self.num_samples += 1;
     }
     
-    /// Get averaged gradients and reset accumulator
+    /// Take the mean of everything accumulated so far, and clear.
+    ///
+    /// The divisor is the number of `accumulate` calls, not the number of rows those
+    /// calls covered, so accumulating one batch of 32 and one of 8 weights them equally.
+    /// Call it once per batch of equal size, or scale before accumulating.
+    ///
+    /// This both reads and resets: a second call with nothing in between returns zeros.
     pub fn get_gradients(&mut self) -> (Vec<Array2<f32>>, Vec<Array1<f32>>) {
         if self.num_samples == 0 {
             return (self.weight_grads.clone(), self.bias_grads.clone());
@@ -148,20 +154,28 @@ impl GradientAccumulator {
     }
 }
 
-/// Memory-efficient batch processor that processes large batches in chunks
+/// Walks a large batch in fixed-size chunks, so peak memory follows the chunk rather
+/// than the whole batch.
+///
+/// It used to hold an `ArrayPool` it never touched. The pool is a separate type; use it
+/// directly if the closure needs scratch space.
 pub struct ChunkedBatchProcessor {
     chunk_size: usize,
-    #[allow(dead_code)]
-    array_pool: ArrayPool,
 }
 
 impl ChunkedBatchProcessor {
-    /// Create a new chunked batch processor
+    /// Create a new chunked batch processor.
+    ///
+    /// A `chunk_size` of zero would loop forever, so it is raised to one.
     pub fn new(chunk_size: usize) -> Self {
         ChunkedBatchProcessor {
-            chunk_size,
-            array_pool: ArrayPool::new(10),
+            chunk_size: chunk_size.max(1),
         }
+    }
+
+    /// Rows handed to the closure at a time.
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
     }
     
     /// Process a large batch in memory-efficient chunks
@@ -495,5 +509,129 @@ mod tests {
         let input = Array1::ones(4);
         let output = weight_sharing.forward(input.view());
         assert_eq!(output.len(), 4);
+    }
+}
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use crate::activations::Activation;
+    use crate::optimizer::{OptimizerWrapper, SGD};
+
+    #[test]
+    fn a_returned_array_comes_back_out_of_the_pool() {
+        let mut pool = ArrayPool::new(4);
+        assert_eq!(pool.stats(), (0, 0, 4));
+
+        let array = pool.get_array_1d(32);
+        assert_eq!(array.len(), 32);
+        // Nothing pooled yet: the first request has nothing to reuse
+        assert_eq!(pool.stats().0, 0);
+
+        pool.return_array_1d(array);
+        assert_eq!(pool.stats().0, 1);
+
+        // The next request of that size is served from the pool, and comes back zeroed
+        let reused = pool.get_array_1d(32);
+        assert!(reused.iter().all(|&v| v == 0.0), "a reused array kept its old values");
+        assert_eq!(pool.stats().0, 0);
+
+        // A different size is not served from it
+        pool.return_array_1d(reused);
+        let other = pool.get_array_2d((4, 8));
+        assert_eq!(other.dim(), (4, 8));
+        assert_eq!(pool.stats().0, 1, "the 1D pool was disturbed by a 2D request");
+    }
+
+    #[test]
+    fn the_pool_stops_growing_at_its_cap() {
+        let mut pool = ArrayPool::new(2);
+        for _ in 0..10 {
+            pool.return_array_1d(Array1::zeros(16));
+        }
+        let (held_1d, _, cap) = pool.stats();
+        assert!(held_1d <= cap, "pool holds {} arrays against a cap of {}", held_1d, cap);
+        assert!(pool.pooled_bytes() > 0);
+    }
+
+    #[test]
+    fn chunking_a_batch_gives_the_same_rows_as_processing_it_whole() {
+        let net = NeuralNetwork::new(
+            &[4, 8, 3],
+            &[Activation::Relu, Activation::Linear],
+            OptimizerWrapper::SGD(SGD::new()),
+        );
+
+        let batch = Array2::from_shape_fn((17, 4), |(i, j)| ((i * 4 + j) as f32 * 0.21).sin());
+
+        let whole = net.predict_batch(batch.view());
+
+        // 17 rows in chunks of 5 leaves a short final chunk, which is where an
+        // off-by-one shows up
+        let mut processor = ChunkedBatchProcessor::new(5);
+        let chunked = processor.process_batch(batch.view(), |chunk| {
+            net.predict_batch(chunk)
+                .outer_iter()
+                .map(|row| row.to_owned())
+                .collect()
+        });
+
+        assert_eq!(chunked.len(), 17);
+        for (i, row) in chunked.iter().enumerate() {
+            for (a, b) in row.iter().zip(whole.row(i).iter()) {
+                assert!((a - b).abs() < 1e-6, "row {}: {} vs {}", i, a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn a_zero_chunk_size_does_not_loop_forever() {
+        let mut processor = ChunkedBatchProcessor::new(0);
+        assert_eq!(processor.chunk_size(), 1);
+
+        let batch = Array2::<f32>::zeros((3, 2));
+        let rows = processor.process_batch(batch.view(), |chunk| {
+            chunk.outer_iter().map(|row| row.to_owned()).collect()
+        });
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn the_gradient_accumulator_averages_and_then_clears() {
+        let net = NeuralNetwork::new(
+            &[3, 4, 2],
+            &[Activation::Relu, Activation::Linear],
+            OptimizerWrapper::SGD(SGD::new()),
+        );
+
+        let mut accumulator = GradientAccumulator::new(&net);
+
+        let weight_grads: Vec<Array2<f32>> = net
+            .layers
+            .iter()
+            .map(|layer| Array2::from_elem(layer.weights.dim(), 1.0))
+            .collect();
+        let bias_grads: Vec<Array1<f32>> = net
+            .layers
+            .iter()
+            .map(|layer| Array1::from_elem(layer.biases.len(), 0.5))
+            .collect();
+
+        accumulator.accumulate(&weight_grads, &bias_grads);
+        accumulator.accumulate(&weight_grads, &bias_grads);
+
+        // get_gradients divides by the number of accumulate calls, so two identical
+        // contributions average back to the original value rather than doubling
+        let (weights, biases) = accumulator.get_gradients();
+        assert!(
+            weights[0].iter().all(|&v| (v - 1.0).abs() < 1e-6),
+            "expected the mean of two identical gradients, got {}",
+            weights[0][[0, 0]]
+        );
+        assert!(biases[0].iter().all(|&v| (v - 0.5).abs() < 1e-6));
+
+        // get_gradients hands the sums over and resets, so a second call is zero
+        let (weights, biases) = accumulator.get_gradients();
+        assert!(weights[0].iter().all(|&v| v == 0.0), "the accumulator did not clear");
+        assert!(biases[0].iter().all(|&v| v == 0.0));
     }
 }

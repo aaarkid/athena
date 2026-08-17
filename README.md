@@ -236,8 +236,8 @@ OpenCL on Windows is fiddly; see the [Windows Setup Guide](docs/WINDOWS_SETUP.md
 - [Getting Started](docs/tutorial_getting_started.md) - the basics at more length
 - [Algorithms Guide](docs/algorithms_guide.md) - what each algorithm is for
 - [Performance Guide](docs/performance_guide.md) - what costs what
-- [Best Practices](docs/best_practices.md) - recommended patterns
-- [Advanced Tutorial](docs/tutorial_advanced.md) - design sketches beyond the crate
+- [Best Practices](docs/best_practices.md) - what to check when an agent will not learn
+- [Advanced Tutorial](docs/tutorial_advanced.md) - writing a layer, multi-agent, partial observability
 
 ## Examples
 
