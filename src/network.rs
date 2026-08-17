@@ -102,8 +102,7 @@ impl NeuralNetwork {
     /// Compute gradients for the neural network's weights and biases for a batch of input vectors.
     /// This function calculates the gradients of the weights and biases for each input vector in the batch
     /// with respect to the target outputs using backpropagation.
-    #[allow(dead_code)]
-    fn backward_batch(&mut self, output_errors: ArrayView2<f32>) -> Vec<(Array2<f32>, Array1<f32>)> {
+    pub fn backward_batch(&mut self, output_errors: ArrayView2<f32>) -> Vec<(Array2<f32>, Array1<f32>)> {
         let mut gradients: Vec<(Array2<f32>, Array1<f32>)> = Vec::new();
         let mut current_error = output_errors.to_owned();
     

@@ -1,8 +1,14 @@
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, Axis};
 use crate::network::NeuralNetwork;
 
-/// Perform numerical gradient checking for a neural network
-/// Returns the relative error between analytical and numerical gradients
+/// Compare the network's analytical weight gradients against numerical ones.
+///
+/// Uses the squared error loss `0.5 * sum((output - target)^2)`, the same loss
+/// `train_minibatch` backpropagates, and returns one relative error per weight.
+/// Values below roughly 1e-4 mean backpropagation agrees with the finite
+/// difference; anything larger points at a broken backward pass.
+///
+/// This is O(number of weights) forward passes, so keep it to small networks.
 pub fn gradient_check(
     network: &mut NeuralNetwork,
     input: ArrayView1<f32>,
@@ -10,47 +16,39 @@ pub fn gradient_check(
     epsilon: f32,
 ) -> Vec<f32> {
     let mut relative_errors = Vec::new();
-    
-    // Compute analytical gradients
+
+    // Analytical gradients: dL/dy is (output - target) for this loss
     let output = network.forward(input);
-    let _loss_original = (&output - &target).mapv(|x| x * x).sum() / 2.0;
-    
-    // For each layer
+    let output_errors = (&output - &target).insert_axis(Axis(0));
+    let analytical = network.backward_batch(output_errors.view());
+
     for layer_idx in 0..network.layers.len() {
-        let weights_shape = {
-            let layer = &network.layers[layer_idx];
-            layer.weights.shape().to_owned()
-        };
-        
+        let weights_shape = network.layers[layer_idx].weights.shape().to_owned();
         let original_weights = network.layers[layer_idx].weights.clone();
-        
-        // Check weight gradients
+        let analytical_weights = &analytical[layer_idx].0;
+
         for i in 0..weights_shape[0] {
             for j in 0..weights_shape[1] {
-                // Compute numerical gradient
                 network.layers[layer_idx].weights[[i, j]] = original_weights[[i, j]] + epsilon;
                 let output_plus = network.forward(input);
                 let loss_plus = (&output_plus - &target).mapv(|x| x * x).sum() / 2.0;
-                
+
                 network.layers[layer_idx].weights[[i, j]] = original_weights[[i, j]] - epsilon;
                 let output_minus = network.forward(input);
                 let loss_minus = (&output_minus - &target).mapv(|x| x * x).sum() / 2.0;
-                
-                let numerical_grad = (loss_plus - loss_minus) / (2.0 * epsilon);
-                
-                // Reset weight
+
                 network.layers[layer_idx].weights[[i, j]] = original_weights[[i, j]];
-                
-                // We can't easily get the analytical gradient from the current API
-                // This is a simplified check - in practice you'd need access to the actual gradients
-                if numerical_grad.abs() > 1e-10 {
-                    let relative_error = 0.0; // Placeholder
-                    relative_errors.push(relative_error);
-                }
+
+                let numerical = (loss_plus - loss_minus) / (2.0 * epsilon);
+                let analytic = analytical_weights[[i, j]];
+
+                // Standard relative error, guarded so two near-zero gradients read as agreement
+                let denominator = analytic.abs().max(numerical.abs()).max(1e-8);
+                relative_errors.push((analytic - numerical).abs() / denominator);
             }
         }
     }
-    
+
     relative_errors
 }
 
@@ -95,4 +93,29 @@ pub fn gradient_stats_per_layer(gradients: &[Array2<f32>]) -> Vec<(f32, f32, f32
         let max = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         (mean, std, min, max)
     }).collect()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::activations::Activation;
+    use crate::optimizer::{OptimizerWrapper, SGD};
+    use ndarray::array;
+
+    #[test]
+    fn backprop_matches_numerical_gradients() {
+        let mut network = NeuralNetwork::new(
+            &[3, 4, 2],
+            &[Activation::Tanh, Activation::Linear],
+            OptimizerWrapper::SGD(SGD::new()),
+        );
+
+        let input = array![0.5, -0.2, 0.8];
+        let target = array![1.0, -0.5];
+
+        let errors = gradient_check(&mut network, input.view(), target.view(), 1e-3);
+
+        assert!(!errors.is_empty());
+        let worst = errors.iter().copied().fold(0.0f32, f32::max);
+        assert!(worst < 1e-2, "largest relative error was {worst}");
+    }
 }
