@@ -320,8 +320,13 @@ impl SACAgent {
             // The "advantage" here is Q - α*log_prob (higher is better)
             let advantage = q_value - self.alpha * log_prob;
 
-            // Normalize advantage for stability
-            let adv_scale = advantage.clamp(-10.0, 10.0) / 10.0;
+            // Normalize advantage for stability. A non-finite critic must not reach
+            // the targets: clamp() passes NaN straight through.
+            let adv_scale = if advantage.is_finite() {
+                advantage.clamp(-10.0, 10.0) / 10.0
+            } else {
+                0.0
+            };
 
             for j in 0..self.action_size {
                 // Inverse tanh to get pre-squashed action (with numerical stability)
