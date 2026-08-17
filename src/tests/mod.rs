@@ -2,6 +2,7 @@
 pub mod test_activations;
 pub mod test_agent;
 pub mod test_edge_cases;
+pub mod test_inference;
 pub mod test_layer_gradients;
 pub mod test_layers;
 pub mod test_learning;

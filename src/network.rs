@@ -37,6 +37,26 @@ use crate::optimizer::{Optimizer, OptimizerWrapper};
 use crate::layers::{Layer, LayerTrait};
 use crate::activations::Activation;
 
+/// Scratch space for `NeuralNetwork::predict_into`.
+///
+/// Two buffers the network alternates between as it walks the layers. They grow to the
+/// widest layer on the first call and are reused after that, so a game loop holding one
+/// of these allocates nothing per frame. One instance serves one call at a time: give
+/// each thread its own.
+#[derive(Clone, Default, Debug)]
+pub struct InferenceBuffers {
+    front: Array2<f32>,
+    back: Array2<f32>,
+    front_row: Array1<f32>,
+    back_row: Array1<f32>,
+}
+
+impl InferenceBuffers {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// A Neural Network consisting of multiple layers, an optimizer, and methods for training
 /// and making predictions.
 #[derive(Serialize, Deserialize, Clone)]
@@ -136,11 +156,106 @@ impl NeuralNetwork {
     /// This function computes the output of the neural network for each input vector in the batch
     /// by successively applying each layer's forward_batch function.
     pub fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        let mut current_output = inputs.to_owned();
-        for layer in &mut self.layers {
+        // Feed the input straight into the first layer rather than copying it first
+        let mut layers = self.layers.iter_mut();
+        let mut current_output = match layers.next() {
+            Some(first) => first.forward_batch(inputs),
+            None => return inputs.to_owned(),
+        };
+        for layer in layers {
             current_output = layer.forward_batch(current_output.view());
         }
         current_output
+    }
+
+    /// Forward pass that caches nothing and takes `&self`.
+    ///
+    /// `forward` stores each layer's input and pre-activation output so `backward_batch`
+    /// can read them, which costs allocations on every call and forces `&mut self`. This
+    /// one does neither, so an `Arc<NeuralNetwork>` can serve every entity in a game at
+    /// once. It produces the same numbers as `forward`; what it does not do is leave the
+    /// network ready for a backward pass.
+    pub fn predict(&self, input: ArrayView1<f32>) -> Array1<f32> {
+        let mut buffers = InferenceBuffers::new();
+        // The borrow of the returned view ends here, leaving the result in `front_row`
+        let _ = self.predict_into(input, &mut buffers);
+        std::mem::take(&mut buffers.front_row)
+    }
+
+    /// Batch form of `predict`.
+    pub fn predict_batch(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        let mut buffers = InferenceBuffers::new();
+        // The borrow of the returned view ends here, leaving the result in `front`
+        let _ = self.predict_batch_into(inputs, &mut buffers);
+        std::mem::take(&mut buffers.front)
+    }
+
+    /// `predict` writing into caller-owned buffers, so a per-frame call allocates nothing
+    /// once the buffers have been sized by the first call.
+    ///
+    /// The returned view borrows `buffers`, so read or copy it before the next call.
+    pub fn predict_into<'b>(
+        &self,
+        input: ArrayView1<f32>,
+        buffers: &'b mut InferenceBuffers,
+    ) -> ArrayView1<'b, f32> {
+        let front = &mut buffers.front_row;
+        let back = &mut buffers.back_row;
+
+        let mut layers = self.layers.iter();
+        match layers.next() {
+            Some(first) => first.forward_into(input, front),
+            None => {
+                *front = input.to_owned();
+                return front.view();
+            }
+        }
+
+        for layer in layers {
+            layer.forward_into(front.view(), back);
+            std::mem::swap(front, back);
+        }
+
+        front.view()
+    }
+
+    /// Batch form of `predict_into`.
+    pub fn predict_batch_into<'b>(
+        &self,
+        inputs: ArrayView2<f32>,
+        buffers: &'b mut InferenceBuffers,
+    ) -> ArrayView2<'b, f32> {
+        let front = &mut buffers.front;
+        let back = &mut buffers.back;
+
+        let mut layers = self.layers.iter();
+        match layers.next() {
+            Some(first) => first.forward_batch_into(inputs, front),
+            None => {
+                *front = inputs.to_owned();
+                return front.view();
+            }
+        }
+
+        // Ping-pong between the two buffers so no layer reads what it is writing
+        for layer in layers {
+            layer.forward_batch_into(front.view(), back);
+            std::mem::swap(front, back);
+        }
+
+        front.view()
+    }
+
+    /// `predict` that reports a wrong input width instead of panicking inside ndarray.
+    pub fn try_predict(&self, input: ArrayView1<f32>) -> crate::error::Result<Array1<f32>> {
+        self.check_input_width(input.len())?;
+        Ok(self.predict(input))
+    }
+
+    /// Batch form of `try_predict`.
+    pub fn try_predict_batch(&self, inputs: ArrayView2<f32>) -> crate::error::Result<Array2<f32>> {
+        self.check_input_width(inputs.shape()[1])?;
+        Ok(self.predict_batch(inputs))
     }
 
     /// Compute gradients for the neural network's weights and biases for a batch of input vectors.

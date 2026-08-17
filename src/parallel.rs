@@ -25,19 +25,15 @@ impl ParallelNetwork {
     /// Parallel forward pass for a batch of inputs
     pub fn forward_batch_parallel(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
         let batch_size = inputs.nrows();
-        let output_size = self.network.layers.last().unwrap().biases.len();
-        
-        // For truly parallel processing, we need to clone the network for each thread
-        // as forward pass currently requires mutable access
+        let network = &self.network;
+        let output_size = network.output_size();
+
+        // predict takes &self and caches nothing, so the threads share one network
         let outputs: Vec<Array1<f32>> = inputs.axis_iter(Axis(0))
             .into_par_iter()
-            .map(|input| {
-                // Clone network for thread-local processing
-                let mut local_network = self.network.clone();
-                local_network.forward(input)
-            })
+            .map(|input| network.predict(input))
             .collect();
-        
+
         // Combine results
         let mut result = Array2::zeros((batch_size, output_size));
         for (i, output) in outputs.into_iter().enumerate() {

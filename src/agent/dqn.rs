@@ -178,10 +178,11 @@ impl DqnAgent {
             // Exploration: random action
             Ok(self.rng.gen_range(0..num_actions))
         } else {
-            // Exploitation: best action from Q-network. try_forward reports a wrong state
+            // Exploitation: best action from Q-network. try_predict reports a wrong state
             // width as an error; forward would panic inside ndarray, which for a game
-            // means the process dies mid-frame.
-            let q_values = self.q_network.try_forward(state)?;
+            // means the process dies mid-frame. It also writes no caches, so acting
+            // costs a matmul and nothing else.
+            let q_values = self.q_network.try_predict(state)?;
             q_values
                 .iter()
                 .enumerate()
