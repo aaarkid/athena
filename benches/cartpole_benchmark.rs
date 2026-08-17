@@ -671,4 +671,29 @@ fn main() {
                  fastest_inference.algorithm, 
                  fastest_inference.inference_time_us);
     }
+
+    // Exit non-zero when an algorithm misses the threshold it is measured against, so
+    // this can be read by something other than a human. CartPole counts as solved at an
+    // average of 195 over 100 episodes; the continuous-action algorithms run against a
+    // discretized version and are held to 190.
+    let missed: Vec<&str> = results
+        .iter()
+        .filter(|r| {
+            let threshold = match r.algorithm.as_str() {
+                "SAC" | "TD3" => 190.0,
+                _ => 195.0,
+            };
+            r.final_avg_reward < threshold
+        })
+        .map(|r| r.algorithm.as_str())
+        .collect();
+
+    if !missed.is_empty() {
+        eprintln!(
+            "\nBelow their solve threshold after {} episodes: {}",
+            episodes,
+            missed.join(", ")
+        );
+        std::process::exit(1);
+    }
 }
