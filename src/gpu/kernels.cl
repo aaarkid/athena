@@ -187,7 +187,7 @@ __kernel void sum_reduction(
     }
 }
 
-// ===== Optimized Fused Kernels =====
+// Fused kernels
 
 // Fused matmul + bias + ReLU
 __kernel void matmul_bias_relu(
@@ -289,7 +289,7 @@ __kernel void matmul_bias(
     }
 }
 
-// ===== Additional Optimized Kernels =====
+// Additional kernels
 
 // Leaky ReLU activation
 __kernel void leaky_relu(

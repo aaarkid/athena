@@ -1,7 +1,6 @@
 //! # Athena Tutorials and Guides
 //! 
-//! Welcome to the Athena documentation! This module contains comprehensive tutorials,
-//! guides, and examples to help you get started with the library.
+//! Tutorials, guides and examples for getting started with the library.
 //! 
 //! ## Available Tutorials
 //! 
@@ -33,7 +32,7 @@
 
 /// Getting Started Tutorial
 /// 
-/// This module provides a comprehensive introduction to Athena.
+/// An introduction to Athena.
 pub mod getting_started {
     //! # Getting Started with Athena
     //! 

@@ -390,7 +390,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Learning Rate: {:.6}", current_lr);
             
             if avg_reward >= 490.0 {
-                println!("\n🎉 CartPole solved! Average reward >= 490");
+                println!("\nCartPole solved, average reward >= 490");
                 break;
             }
         }

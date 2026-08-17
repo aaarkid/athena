@@ -356,9 +356,7 @@ impl PPOAgent {
             total_value_loss += value_loss;
             total_entropy += entropy;
 
-            // ============================================
-            // APPLY GRADIENTS: Update networks
-            // ============================================
+            // Apply gradients to the networks
 
             // Train value network with returns as targets (MSE loss)
             self.value.train_minibatch(states.view(), value_targets.view(), learning_rate);

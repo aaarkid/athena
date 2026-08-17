@@ -86,7 +86,7 @@ fn test_gpu_backward() -> Result<(), String> {
         return Err(format!("Input errors differ significantly: {}", input_error_diff));
     }
 
-    println!("\n✓ All gradients match within tolerance!");
+    println!("\nAll gradients match within tolerance");
 
     // Test single sample backward
     println!("\nTesting single sample backward...");
@@ -111,7 +111,7 @@ fn test_gpu_backward() -> Result<(), String> {
         return Err(format!("Single sample gradients differ significantly: weight_diff={}, bias_diff={}", single_w_diff, single_b_diff));
     }
 
-    println!("✓ Single sample gradients match!");
+    println!("Single sample gradients match");
 
     Ok(())
 }

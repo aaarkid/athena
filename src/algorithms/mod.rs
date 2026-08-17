@@ -1,8 +1,7 @@
 //! # Advanced RL Algorithms Module
 //! 
-//! This module implements state-of-the-art reinforcement learning algorithms beyond
-//! basic DQN. Each algorithm is designed for different types of problems and offers
-//! unique advantages.
+//! Reinforcement learning algorithms beyond basic DQN. Each one suits a different
+//! kind of problem; see the notes below for which to pick.
 //! 
 //! ## Available Algorithms
 //! 
@@ -68,7 +67,7 @@
 //! All algorithms in this module:
 //! - Support both CPU and GPU training (with appropriate features)
 //! - Include builder patterns for easy configuration
-//! - Have comprehensive unit tests
+//! - Have unit tests
 //! - Follow the same interface patterns for consistency
 //! - Support serialization for model saving/loading
 

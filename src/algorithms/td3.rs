@@ -195,9 +195,7 @@ impl TD3Agent {
         let next_states = stack_arrays(batch.iter().map(|e| e.next_state.view()).collect());
         let dones: Vec<bool> = batch.iter().map(|e| e.done).collect();
 
-        // ============================================
-        // CRITIC UPDATE: Minimize Bellman error
-        // ============================================
+        // Critic update: minimize the Bellman error
 
         // Compute Q targets
         let mut critic1_targets = Array2::zeros((batch_size, 1));
@@ -258,9 +256,7 @@ impl TD3Agent {
         let critic_loss = (&critic1_outputs - &critic1_targets).mapv(|x| x * x).mean().unwrap_or(0.0)
                         + (&critic2_outputs - &critic2_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
-        // ============================================
-        // ACTOR UPDATE (delayed) - Simple but effective
-        // ============================================
+        // Actor update, delayed
         //
         // TD3 objective: maximize Q(s, μ(s))
         //

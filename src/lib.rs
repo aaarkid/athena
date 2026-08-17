@@ -1,42 +1,38 @@
-//! # Athena - High-Performance Deep Reinforcement Learning Library
-//! 
-//! Athena is a Rust-based reinforcement learning library designed for high performance,
-//! modularity, and ease of use. It provides a comprehensive set of tools for building
-//! and training deep neural networks, implementing various RL algorithms, and deploying
-//! models across different platforms.
-//! 
-//! ## 📚 Documentation Hub
-//! 
-//! ### 🚀 Getting Started
-//! - **[Tutorials](tutorials)** - Comprehensive guides and examples
-//! - **[Getting Started Guide](tutorials::getting_started)** - Your first agent
-//! - **[Examples](https://github.com/yourusername/athena/tree/main/examples)** - Working code samples
-//! 
-//! ### 🎯 Core Concepts
-//! - **[Neural Networks](network)** - Flexible architecture
-//! - **[RL Agents](agent)** - DQN and other agents
-//! - **[Algorithms](algorithms)** - PPO, SAC, TD3, and more
-//! - **[Optimizers](optimizer)** - Training optimization
-//! 
-//! ### 🔧 Advanced Topics
-//! - **[Advanced Tutorial](tutorials::advanced)** - Custom layers and techniques
-//! - **[Performance Guide](tutorials::performance)** - Optimization tips
-//! - **[GPU Acceleration](gpu)** - Intel Arc and NVIDIA support
-//! - **[Best Practices](tutorials::best_practices)** - Recommended patterns
-//! 
-//! ### 📖 Reference Guides
-//! - **[Algorithm Selection](tutorials::algorithms)** - Choose the right algorithm
-//! - **[API Reference](#modules)** - Complete module documentation
-//! 
-//! ## Key Features
-//! 
-//! - **Neural Networks**: Flexible architecture with various layer types and activations
-//! - **RL Algorithms**: DQN, A2C, PPO, SAC, TD3, and more
-//! - **Optimizers**: SGD, Adam, RMSProp with proper per-layer state management
-//! - **Memory Efficiency**: Replay buffers with prioritization support
-//! - **Cross-Platform**: Native Rust, Python bindings, and WebAssembly support
-//! - **Type Safety**: Compile-time guarantees with Rust's type system
-//! 
+//! # Athena
+//!
+//! A deep learning library for Rust, with a focus on reinforcement learning.
+//! It covers network construction and training, the common RL algorithms, and
+//! deployment through Python bindings and WebAssembly.
+//!
+//! ## Getting started
+//!
+//! - [Tutorials](tutorials) - guides and worked examples
+//! - [Getting Started Guide](tutorials::getting_started) - your first agent
+//! - [Examples](https://github.com/aaarkid/athena/tree/master/examples) - runnable code samples
+//!
+//! ## Core concepts
+//!
+//! - [Neural Networks](network) - layer stacks and training
+//! - [RL Agents](agent) - DQN and traits for custom agents
+//! - [Algorithms](algorithms) - A2C, PPO, SAC, TD3
+//! - [Optimizers](optimizer) - SGD, Adam, RMSProp
+//!
+//! ## Advanced topics
+//!
+//! - [Advanced Tutorial](tutorials::advanced) - custom layers and techniques
+//! - [Performance Guide](tutorials::performance) - optimization tips
+//! - [GPU Acceleration](gpu) - OpenCL backend, Intel Arc and NVIDIA
+//! - [Best Practices](tutorials::best_practices) - recommended patterns
+//! - [Algorithm Selection](tutorials::algorithms) - choosing an algorithm
+//!
+//! ## Features
+//!
+//! - Neural networks with several layer types and activations
+//! - RL algorithms: DQN, A2C, PPO, SAC, TD3
+//! - Optimizers: SGD, Adam, RMSProp, each with per-layer state
+//! - Replay buffers, with optional prioritization
+//! - Native Rust, Python bindings and WebAssembly targets
+//!
 //! ## Quick Start
 //! 
 //! ```rust,no_run

@@ -124,7 +124,7 @@ fn test_gpu_optimized_network(gpu_backend: Arc<GpuBackend>) -> Result<(), String
     let cpu_time = start.elapsed().as_secs_f32() * 1000.0 / 10.0;
     
     println!("CPU Network: {:.2}ms per iteration", cpu_time);
-    println!("\n🚀 GPU Speedup: {:.2}x", cpu_time / avg_gpu_time);
+    println!("\nGPU speedup: {:.2}x", cpu_time / avg_gpu_time);
     
     // Test throughput
     let throughput_gpu = (batch_size as f32 * 1000.0) / avg_gpu_time;

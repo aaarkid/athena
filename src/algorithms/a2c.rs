@@ -190,9 +190,7 @@ impl A2CAgent {
                       / advantages.len() as f32).sqrt() + 1e-8;
         let norm_advantages: Vec<f32> = advantages.iter().map(|a| (a - adv_mean) / adv_std).collect();
 
-        // ============================================
-        // CRITIC UPDATE: Minimize MSE(V(s), returns)
-        // ============================================
+        // Critic update: minimize MSE(V(s), returns)
 
         // Create target values for critic (returns reshaped to match critic output)
         let critic_targets = Array2::from_shape_vec(
@@ -207,9 +205,7 @@ impl A2CAgent {
         let critic_outputs = self.critic.forward_batch(states.view());
         let critic_loss = (&critic_outputs - &critic_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
-        // ============================================
-        // ACTOR UPDATE: Proper policy gradient
-        // ============================================
+        // Actor update: policy gradient
         //
         // For discrete actions, the policy gradient is:
         //   ∇θ J(θ) = E[∇θ log π(a|s) * A(s,a)]

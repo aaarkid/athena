@@ -39,7 +39,7 @@ fn test_gpu() -> Result<(), String> {
     let b = Array2::from_shape_fn((128, 128), |_| rand::random::<f32>());
 
     let result = gpu_backend.matmul(a.view(), b.view())?;
-    println!("✓ Matrix multiplication successful, result shape: {:?}", result.shape());
+    println!("Matrix multiplication ok, result shape: {:?}", result.shape());
 
     // Test 2: Matrix-vector multiplication
     println!("\nTest 2: Matrix-vector multiplication");
@@ -47,7 +47,7 @@ fn test_gpu() -> Result<(), String> {
     let vector = Array2::from_shape_fn((128, 1), |_| rand::random::<f32>());
 
     let result = gpu_backend.matmul(matrix.view(), vector.view())?;
-    println!("✓ Matrix-vector multiplication successful, result shape: {:?}", result.shape());
+    println!("Matrix-vector multiplication ok, result shape: {:?}", result.shape());
 
     // Test 3: Batch operations
     println!("\nTest 3: Batch matrix multiplication");
@@ -55,7 +55,7 @@ fn test_gpu() -> Result<(), String> {
     let batch_b = Array2::from_shape_fn((256, 128), |_| rand::random::<f32>());
 
     let result = gpu_backend.matmul(batch_a.view(), batch_b.view())?;
-    println!("✓ Batch multiplication successful, result shape: {:?}", result.shape());
+    println!("Batch multiplication ok, result shape: {:?}", result.shape());
 
     // Test 4: Quick performance test
     println!("\nTest 4: Quick performance comparison");

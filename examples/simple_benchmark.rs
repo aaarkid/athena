@@ -120,7 +120,7 @@ fn main() {
         }
     }
     
-    println!("\n✅ All systems operational!");
+    println!("\nAll checks passed");
     println!("\nPerformance Summary:");
     println!("- Dense layers: <1µs for small layers");
     println!("- Full networks: ~1ms for batch=32");

@@ -227,9 +227,7 @@ impl SACAgent {
         let next_states = stack_arrays(batch.iter().map(|e| e.next_state.view()).collect());
         let dones: Vec<bool> = batch.iter().map(|e| e.done).collect();
 
-        // ============================================
-        // Q-NETWORK UPDATE
-        // ============================================
+        // Q-network update
 
         // Compute Q targets
         let mut q1_targets = Array2::zeros((batch_size, 1));
@@ -279,9 +277,7 @@ impl SACAgent {
         let q_loss = (&q1_outputs - &q1_targets).mapv(|x| x * x).mean().unwrap_or(0.0)
                    + (&q2_outputs - &q2_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
-        // ============================================
-        // POLICY UPDATE - Simple but effective approach
-        // ============================================
+        // Policy update
         //
         // SAC objective: maximize E[Q(s,a) - α * log π(a|s)]
         //
@@ -358,9 +354,7 @@ impl SACAgent {
         // Train actor with MSE toward targets (simpler and more stable)
         self.actor.train_minibatch(states.view(), actor_targets.view(), learning_rate);
 
-        // ============================================
-        // TEMPERATURE UPDATE (if auto_alpha)
-        // ============================================
+        // Temperature update, when auto_alpha is set
 
         let mut alpha_loss = 0.0;
         if self.auto_alpha {
@@ -372,9 +366,7 @@ impl SACAgent {
             self.alpha = self.log_alpha.exp().clamp(0.01, 1.0);
         }
 
-        // ============================================
-        // SOFT UPDATE TARGET NETWORKS
-        // ============================================
+        // Soft update of the target networks
         self.soft_update();
 
         Ok((q_loss, policy_loss, alpha_loss))

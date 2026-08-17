@@ -643,7 +643,7 @@ fn main() {
         .collect();
     
     if !solved_algorithms.is_empty() {
-        println!("✓ The following algorithms successfully solved CartPole:");
+        println!("Solved CartPole:");
         for result in &solved_algorithms {
             println!("  - {} in {} episodes", 
                      result.algorithm, 
@@ -653,12 +653,12 @@ fn main() {
         // Find the fastest solver
         if let Some(fastest) = solved_algorithms.iter()
             .min_by_key(|r| r.episodes_to_solve.unwrap()) {
-            println!("\n✓ Fastest solver: {} ({} episodes)", 
+            println!("\nFastest solver: {} ({} episodes)", 
                      fastest.algorithm, 
                      fastest.episodes_to_solve.unwrap());
         }
     } else {
-        println!("✗ No algorithms solved CartPole within {} episodes", episodes);
+        println!("No algorithm solved CartPole within {} episodes", episodes);
         println!("  Consider increasing episode limit or adjusting hyperparameters");
     }
     
@@ -667,7 +667,7 @@ fn main() {
         let fastest_inference = results.iter()
             .min_by_key(|r| r.inference_time_us)
             .unwrap();
-        println!("\n✓ Fastest inference: {} ({}μs per action)", 
+        println!("\nFastest inference: {} ({}μs per action)", 
                  fastest_inference.algorithm, 
                  fastest_inference.inference_time_us);
     }
