@@ -54,14 +54,12 @@
 //! let dropout = DropoutLayer::new(64, 0.3);  // size, dropout_rate
 //! ```
 //! 
-//! ## Layer Composition
+//! ## What can go into a NeuralNetwork
 //! 
-//! Typical patterns for deep networks:
-//! 
-//! 1. **Standard Block**: Dense → BatchNorm → Activation → Dropout
-//! 2. **ResNet Block**: Add skip connections around blocks
-//! 3. **Wide Networks**: Increase layer width for more capacity
-//! 4. **Deep Networks**: Stack many layers with careful initialization
+//! Only `DenseLayer`. `NeuralNetwork` holds `Vec<Layer>` and `Layer` is an alias for
+//! `DenseLayer`, not an enum, so conv, pooling, batch norm, dropout and embedding
+//! layers have to be composed by hand against `LayerTrait`. `examples/conv_shapes.rs`
+//! is the worked reference. See `docs/conventions.md` for the full table.
 //! 
 //! ## Performance Tips
 //! 

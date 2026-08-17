@@ -447,15 +447,33 @@ let actor_update_freq = 2;
 2. **Thread Affinity**: Pin threads to cores
 3. **NUMA Awareness**: Keep data local to cores
 
-### GPU Acceleration (Future)
+### GPU Acceleration
 
-While Athena currently runs on CPU, GPU support is planned:
+There is an OpenCL backend, behind the `gpu` feature. It needs OpenCL drivers installed.
+The backend picks an Intel Arc device first, then falls back to NVIDIA, AMD, or whatever
+else the platform reports.
 
-```rust
-// Future API (not yet implemented)
-let device = Device::cuda(0);
-let network = network.to_device(device);
+Matrix multiplication, elementwise addition and multiplication, and the activation
+functions have kernels. **Everything else stays on the CPU**, so a network is not moved
+wholesale to the device and a small network will not get faster.
+
+```bash
+cargo run --example gpu_test --features gpu
 ```
+
+`gpu-mock` compiles the same API with no OpenCL dependency, which is what CI and a
+machine with no SDK want:
+
+```bash
+cargo run --example gpu_test --features gpu-mock
+```
+
+Under `gpu-mock` **every operation runs on the CPU**. `device_type` reports `IntelGpu`
+and `device_info` returns constants from `src/gpu/mock_backend.rs`, not anything queried
+from hardware. It exists so the GPU API compiles and can be tested for shape; its
+timings are CPU timings and say nothing about any device.
+
+`--all-features` does not link without OpenCL installed.
 
 ## Common Bottlenecks and Solutions
 

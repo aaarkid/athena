@@ -1,20 +1,20 @@
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use athena::layers::{GpuDenseLayer, DenseLayer, LayerTrait};
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use athena::activations::Activation;
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use ndarray::Array2;
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use ndarray_rand::RandomExt;
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use std::time::Instant;
 
-#[cfg(not(feature = "gpu"))]
+#[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
 fn main() {
     println!("GPU support not enabled. Run with: cargo run --example gpu_acceleration --features gpu");
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Intel Arc GPU Acceleration Example ===\n");
     

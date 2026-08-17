@@ -1,13 +1,13 @@
 //! Simple GPU acceleration example that directly uses the GPU backend
 
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 use athena::gpu::{GpuBackend, ComputeBackend};
 
 fn main() {
     println!("=== Simple GPU Acceleration Test ===\n");
     
-    #[cfg(feature = "gpu")]
+    #[cfg(any(feature = "gpu", feature = "gpu-mock"))]
     {
         match test_gpu_operations() {
             Ok(()) => println!("\nGPU tests completed successfully!"),
@@ -15,11 +15,12 @@ fn main() {
         }
     }
     
-    #[cfg(not(feature = "gpu"))]
-    println!("GPU feature not enabled. Run with --features gpu");
+    #[cfg(not(any(feature = "gpu", feature = "gpu-mock")))]
+    println!("Neither GPU feature is enabled. Run with --features gpu for OpenCL,\n\
+         or --features gpu-mock to exercise the same API on the CPU.");
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn test_gpu_operations() -> Result<(), String> {
     // Initialize GPU backend
     let gpu_backend = GpuBackend::new()?;
@@ -107,14 +108,14 @@ fn test_gpu_operations() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn benchmark_cpu_matmul(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
     let start = Instant::now();
     let _ = a.dot(b);
     start.elapsed().as_secs_f32() * 1000.0
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn benchmark_gpu_matmul(gpu: &GpuBackend, a: &Array2<f32>, b: &Array2<f32>) -> Result<f32, String> {
     // Warmup
     let _ = gpu.matmul(a.view(), b.view())?;
@@ -124,7 +125,7 @@ fn benchmark_gpu_matmul(gpu: &GpuBackend, a: &Array2<f32>, b: &Array2<f32>) -> R
     Ok(start.elapsed().as_secs_f32() * 1000.0)
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn batch_benchmark_cpu(size: usize, batch_count: usize) -> f32 {
     let matrices_a: Vec<_> = (0..batch_count)
         .map(|_| Array2::from_shape_fn((size, size), |_| rand::random::<f32>()))
@@ -140,7 +141,7 @@ fn batch_benchmark_cpu(size: usize, batch_count: usize) -> f32 {
     start.elapsed().as_secs_f32() * 1000.0
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(any(feature = "gpu", feature = "gpu-mock"))]
 fn batch_benchmark_gpu(gpu: &GpuBackend, size: usize, batch_count: usize) -> Result<f32, String> {
     let matrices_a: Vec<_> = (0..batch_count)
         .map(|_| Array2::from_shape_fn((size, size), |_| rand::random::<f32>()))

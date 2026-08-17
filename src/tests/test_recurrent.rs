@@ -4,9 +4,12 @@
 //! and nothing else in the crate exercises it. These tests compare it against
 //! finite differences of the loss.
 
-use ndarray::{Array3, ArrayView3};
+use ndarray::{array, s, Array1, Array3, ArrayView3};
 
+use crate::activations::Activation;
 use crate::layers::{GRUGradients, GRULayer, LSTMGradients, LSTMLayer};
+use crate::optimizer::{OptimizerWrapper, SGD};
+use crate::recurrent::{RecurrentCell, RecurrentNetwork};
 
 const EPS: f32 = 1e-2;
 // f32 finite differences on a recurrent graph accumulate noise across time steps
@@ -314,4 +317,119 @@ fn recurrent_network_learns_with_a_gru_cell() {
         "GRU cell did not learn: loss went from {} to {}",
         initial, final_loss
     );
+}
+
+#[test]
+fn stepping_an_lstm_matches_running_the_whole_sequence() {
+    // forward_step advances the state directly instead of rebuilding the sequence, so
+    // the two have to agree step for step
+    let mut layer = LSTMLayer::new(3, 5, true);
+    let seq_len = 6;
+    let batch = 2;
+    let inputs = Array3::from_shape_fn((batch, seq_len, 3), |(b, t, i)| {
+        ((b * 40 + t * 7 + i) as f32 * 0.23).sin()
+    });
+
+    let from_sequence = layer.forward_sequence(inputs.view());
+
+    layer.reset_states();
+    for t in 0..seq_len {
+        let stepped = layer.forward_step(inputs.slice(s![.., t, ..]));
+        for b in 0..batch {
+            for h in 0..5 {
+                let expected = from_sequence[[b, t, h]];
+                assert!(
+                    (stepped[[b, h]] - expected).abs() < 1e-5,
+                    "step {} unit {}: {} vs {}",
+                    t,
+                    h,
+                    stepped[[b, h]],
+                    expected
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn stepping_a_gru_matches_running_the_whole_sequence() {
+    let mut layer = GRULayer::new(3, 5, true);
+    let seq_len = 6;
+    let batch = 2;
+    let inputs = Array3::from_shape_fn((batch, seq_len, 3), |(b, t, i)| {
+        ((b * 31 + t * 5 + i) as f32 * 0.19).cos()
+    });
+
+    let from_sequence = layer.forward_sequence(inputs.view());
+
+    layer.reset_state();
+    for t in 0..seq_len {
+        let stepped = layer.forward_step(inputs.slice(s![.., t, ..]));
+        for b in 0..batch {
+            for h in 0..5 {
+                let expected = from_sequence[[b, t, h]];
+                assert!(
+                    (stepped[[b, h]] - expected).abs() < 1e-5,
+                    "step {} unit {}: {} vs {}",
+                    t,
+                    h,
+                    stepped[[b, h]],
+                    expected
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn stepping_a_recurrent_network_matches_a_forward_batch_over_the_same_inputs() {
+    let cell = RecurrentCell::Lstm(LSTMLayer::new(2, 6, false));
+    let mut model = RecurrentNetwork::new(
+        cell,
+        &[6, 3],
+        &[Activation::Linear],
+        OptimizerWrapper::SGD(SGD::new()),
+    );
+
+    let seq_len = 5;
+    let inputs = Array3::from_shape_fn((1, seq_len, 2), |(_, t, i)| ((t * 3 + i) as f32 * 0.41).sin());
+    let expected = model.forward_batch(inputs.view());
+
+    model.reset();
+    let mut last = Array1::zeros(3);
+    for t in 0..seq_len {
+        let observation = inputs.slice(s![0, t, ..]);
+        last = model.step(observation);
+    }
+
+    for (a, b) in last.iter().zip(expected.row(0).iter()) {
+        assert!((a - b).abs() < 1e-5, "{} vs {}", a, b);
+    }
+}
+
+#[test]
+fn reset_returns_a_stepped_network_to_its_first_output() {
+    let cell = RecurrentCell::Gru(GRULayer::new(2, 6, false));
+    let mut model = RecurrentNetwork::new(
+        cell,
+        &[6, 2],
+        &[Activation::Linear],
+        OptimizerWrapper::SGD(SGD::new()),
+    );
+
+    let observation = array![0.5, -0.25];
+    let first = model.step(observation.view());
+
+    // Carrying state, so the second call must differ
+    let second = model.step(observation.view());
+    assert!(
+        first.iter().zip(second.iter()).any(|(a, b)| (a - b).abs() > 1e-6),
+        "the cell carried no state between steps"
+    );
+
+    model.reset();
+    let after_reset = model.step(observation.view());
+    for (a, b) in after_reset.iter().zip(first.iter()) {
+        assert!((a - b).abs() < 1e-6, "reset left state behind: {} vs {}", a, b);
+    }
 }

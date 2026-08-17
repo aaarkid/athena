@@ -165,7 +165,7 @@ impl PyDqnAgent {
     }
     
     fn decay_epsilon(&mut self, decay_rate: f32) {
-        self.inner.epsilon *= decay_rate;
+        self.inner.decay_epsilon(decay_rate, 0.0);
     }
     
     #[getter]

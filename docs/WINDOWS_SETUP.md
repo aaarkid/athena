@@ -159,7 +159,7 @@ The full test additionally includes:
 ## Expected Output
 
 With working GPU support:
-```
+```text
 === Intel Arc GPU Acceleration Example ===
 
 Initializing GPU layer...
@@ -175,7 +175,7 @@ Global Memory: 16225 MB
 ```
 
 Without GPU (fallback to mock):
-```
+```text
 Failed to initialize real GPU: OpenCL not available...
 Using mock GPU backend for demonstration.
 ```

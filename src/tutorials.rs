@@ -65,7 +65,7 @@ pub mod getting_started {
     //!     let action_dim = 4;     // up, down, left, right
     //!     
     //!     // Create a neural network architecture
-    //!     let layer_sizes = &[state_dim, 128, 128, action_dim];
+    //!     let layer_sizes = &[state_dim, 32, 32, action_dim];
     //!     
     //!     // Choose an optimizer
     //!     let optimizer = OptimizerWrapper::SGD(SGD::new());
@@ -82,12 +82,14 @@ pub mod getting_started {
     //!     // Create a replay buffer
     //!     let mut replay_buffer = ReplayBuffer::new(10000);
     //!     
-    //!     // Training loop
-    //!     for episode in 0..1000 {
+    //!     // Training loop. 30 episodes is enough to show the shape of it and keeps
+    //!     // this doctest fast; a real run needs hundreds. examples/game_loop_dqn.rs
+    //!     // is the runnable version.
+    //!     for episode in 0..30 {
     //!         let mut state = array![0.0, 0.0, 4.0, 4.0]; // start at (0,0), goal at (4,4)
     //!         let mut total_reward = 0.0;
     //!         
-    //!         for step in 0..100 {
+    //!         for step in 0..40 {
     //!             // Select action
     //!             let action = agent.act(state.view())?;
     //!             
@@ -106,6 +108,7 @@ pub mod getting_started {
     //!             // Train when enough experiences
     //!             if replay_buffer.len() >= 32 {
     //!                 let batch = replay_buffer.sample(32);
+    //!                 // (experiences, gamma, learning_rate)
     //!                 agent.train_on_batch(&batch, 0.99, 0.001)?;
     //!             }
     //!             
@@ -115,7 +118,7 @@ pub mod getting_started {
     //!             if done { break; }
     //!         }
     //!         
-    //!         println!("Episode {}: Total Reward = {}", episode, total_reward);
+    //!         let _ = (episode, total_reward);
     //!     }
     //!     
     //!     Ok(())

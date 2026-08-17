@@ -99,25 +99,48 @@ impl DqnAgent {
         target_update_freq: usize,
         use_double_dqn: bool,
     ) -> Self {
-        // Validate inputs
+        Self::try_new(layer_sizes, epsilon, optimizer, target_update_freq, use_double_dqn)
+            .unwrap_or_else(|e| panic!("DqnAgent::new: {}", e))
+    }
+
+    /// Build an agent, reporting a bad configuration instead of panicking.
+    ///
+    /// Hidden layers get ReLU and the output layer Linear, which is what a Q-function
+    /// needs: its outputs are returns, not probabilities.
+    pub fn try_new(
+        layer_sizes: &[usize],
+        epsilon: f32,
+        optimizer: OptimizerWrapper,
+        target_update_freq: usize,
+        use_double_dqn: bool,
+    ) -> Result<Self> {
         if layer_sizes.len() < 2 {
-            panic!("Network must have at least input and output layers");
+            return Err(AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!(
+                    "an agent needs at least a state width and an action count, got {} entries",
+                    layer_sizes.len()
+                ),
+            });
         }
         if target_update_freq == 0 {
-            panic!("target_update_freq must be at least 1; the update counter is taken modulo it");
+            return Err(AthenaError::InvalidParameter {
+                name: "target_update_freq".to_string(),
+                reason: "must be at least 1; the update counter is taken modulo it".to_string(),
+            });
         }
-        
+
         // Create activations (ReLU for hidden layers, Linear for output)
         let mut activations = vec![Activation::Relu; layer_sizes.len() - 2];
         activations.push(Activation::Linear);
-        
-        // Create main and target networks
-        let q_network = NeuralNetwork::new(layer_sizes, &activations, optimizer.clone());
-        let target_network = NeuralNetwork::new(layer_sizes, &activations, optimizer);
-        
+
+        let q_network = NeuralNetwork::try_new(layer_sizes, &activations, optimizer)?;
+        // The target network is only ever assigned to, so it holds no optimizer state
+        let target_network = q_network.clone_as_target();
+
         let rng = default_rng();
-        
-        DqnAgent {
+
+        Ok(DqnAgent {
             q_network,
             target_network,
             epsilon,
@@ -126,7 +149,7 @@ impl DqnAgent {
             use_double_dqn,
             train_steps: 0,
             rng,
-        }
+        })
     }
     
     /// Reseed this agent's generator so its randomness repeats.
@@ -178,10 +201,11 @@ impl DqnAgent {
             // Exploration: random action
             Ok(self.rng.gen_range(0..num_actions))
         } else {
-            // Exploitation: best action from Q-network. try_forward reports a wrong state
+            // Exploitation: best action from Q-network. try_predict reports a wrong state
             // width as an error; forward would panic inside ndarray, which for a game
-            // means the process dies mid-frame.
-            let q_values = self.q_network.try_forward(state)?;
+            // means the process dies mid-frame. It also writes no caches, so acting
+            // costs a matmul and nothing else.
+            let q_values = self.q_network.try_predict(state)?;
             q_values
                 .iter()
                 .enumerate()
@@ -197,10 +221,32 @@ impl DqnAgent {
     pub fn update_epsilon(&mut self, epsilon: f32) {
         self.epsilon = epsilon.clamp(0.0, 1.0);
     }
+
+    /// Multiply epsilon by `decay_rate`, stopping at `min_epsilon`.
+    ///
+    /// The usual exploration schedule: call it once per episode with a rate slightly
+    /// below 1.0. A floor above zero keeps a trained agent trying the occasional other
+    /// action, which matters when the environment drifts.
+    ///
+    /// ```
+    /// # use athena::agent::DqnAgent;
+    /// # use athena::optimizer::{OptimizerWrapper, SGD};
+    /// let mut agent = DqnAgent::new(&[4, 16, 2], 1.0, OptimizerWrapper::SGD(SGD::new()), 100, true);
+    /// for _ in 0..1000 {
+    ///     agent.decay_epsilon(0.99, 0.05);
+    /// }
+    /// assert!((agent.epsilon - 0.05).abs() < 1e-6);
+    /// ```
+    pub fn decay_epsilon(&mut self, decay_rate: f32, min_epsilon: f32) {
+        let floor = min_epsilon.clamp(0.0, 1.0);
+        self.epsilon = (self.epsilon * decay_rate).clamp(floor, 1.0);
+    }
     
     /// Update target network weights from main network
     pub fn update_target_network(&mut self) {
-        self.target_network = self.q_network.clone();
+        // Assigns into the arrays the target network already owns. Cloning the whole
+        // network would also copy the optimizer state and the forward-pass caches.
+        self.target_network.copy_parameters_from(&self.q_network);
     }
     
     /// Train the agent on a batch of experiences
@@ -332,95 +378,95 @@ impl DqnAgent {
             dones.push(exp.done);
         }
         
-        // Get current Q-values
-        let current_q_values = self.q_network.forward_batch(states.view());
-        
-        // Calculate target Q-values
-        let mut target_q_values = current_q_values.clone();
-
         // Whether action a is legal in the next state. Without a mask every action
         // counts, which is what plain DQN assumes.
         let legal = |i: usize, a: usize| -> bool {
             next_masks.map(|masks| masks[i][a]).unwrap_or(true)
         };
-        
+
+        // The bootstrap passes read no gradients, so they go through predict_batch and
+        // leave the main network's caches free for the states pass below
+        let mut targets = vec![0.0f32; batch_size];
+
         if self.use_double_dqn {
             // Double DQN: use main network to select actions, target network to evaluate
-            let next_q_values_main = self.q_network.forward_batch(next_states.view());
-            let next_q_values_target = self.target_network.forward_batch(next_states.view());
-            
-            for i in 0..batch_size {
-                if !dones[i] {
-                    // Find best action using main network
-                    let best_action = next_q_values_main.row(i)
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| legal(i, *idx))
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx);
+            let next_q_values_main = self.q_network.predict_batch(next_states.view());
+            let next_q_values_target = self.target_network.predict_batch(next_states.view());
 
-                    // A next state with no legal action is terminal in all but name
-                    let target_value = match best_action {
-                        Some(a) => rewards[i] + gamma * next_q_values_target[[i, a]],
-                        None => rewards[i],
-                    };
-                    target_q_values[[i, actions[i]]] = target_value;
-                } else {
-                    target_q_values[[i, actions[i]]] = rewards[i];
+            for i in 0..batch_size {
+                if dones[i] {
+                    targets[i] = rewards[i];
+                    continue;
                 }
+
+                // Find best action using main network
+                let best_action = next_q_values_main.row(i)
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| legal(i, *idx))
+                    .max_by(|(_, a), (_, b)| {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(idx, _)| idx);
+
+                // A next state with no legal action is terminal in all but name
+                targets[i] = match best_action {
+                    Some(a) => rewards[i] + gamma * next_q_values_target[[i, a]],
+                    None => rewards[i],
+                };
             }
         } else {
             // Standard DQN: use target network for both selection and evaluation
-            let next_q_values = self.target_network.forward_batch(next_states.view());
-            
+            let next_q_values = self.target_network.predict_batch(next_states.view());
+
             for i in 0..batch_size {
-                if !dones[i] {
-                    let max_next_q = next_q_values.row(i).iter()
-                        .enumerate()
-                        .filter(|(idx, _)| legal(i, *idx))
-                        .map(|(_, &val)| val)
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    let target_value = if max_next_q.is_finite() {
-                        rewards[i] + gamma * max_next_q
-                    } else {
-                        rewards[i]
-                    };
-                    target_q_values[[i, actions[i]]] = target_value;
-                } else {
-                    target_q_values[[i, actions[i]]] = rewards[i];
+                if dones[i] {
+                    targets[i] = rewards[i];
+                    continue;
                 }
+
+                let max_next_q = next_q_values.row(i).iter()
+                    .enumerate()
+                    .filter(|(idx, _)| legal(i, *idx))
+                    .map(|(_, &val)| val)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                targets[i] = if max_next_q.is_finite() {
+                    rewards[i] + gamma * max_next_q
+                } else {
+                    rewards[i]
+                };
             }
         }
-        
-        // The target differs from the prediction on the taken action only, so the TD
-        // error is that one entry's difference
+
+        // The only forward pass that has to leave caches behind, so that the error below
+        // can be backpropagated without repeating it
+        let current_q_values = self.q_network.forward_batch(states.view());
+
+        // The target differs from the prediction on the taken action only, so the error
+        // matrix is zero on every other column and the TD error is that one difference.
+        // Importance-sampling weights scale each sample's contribution to the update but
+        // not the TD error the caller gets back for its priorities.
+        let mut output_errors = Array2::zeros((batch_size, num_actions));
         let mut td_errors = Vec::with_capacity(batch_size);
+        let mut squared_error = 0.0f32;
+
         for i in 0..batch_size {
             let a = actions[i];
-            td_errors.push((target_q_values[[i, a]] - current_q_values[[i, a]]).abs());
+            let td = targets[i] - current_q_values[[i, a]];
+            td_errors.push(td.abs());
+            squared_error += td * td;
+
+            let weight = weights.map(|w| w[i]).unwrap_or(1.0);
+            output_errors[[i, a]] = -weight * td;
         }
 
-        // Importance-sampling weights scale each sample's contribution. Shrinking the
-        // target toward the prediction is the same as scaling that sample's error.
-        if let Some(weights) = weights {
-            for i in 0..batch_size {
-                let a = actions[i];
-                let current = current_q_values[[i, a]];
-                let td = target_q_values[[i, a]] - current;
-                target_q_values[[i, a]] = current + weights[i] * td;
-            }
-        }
+        // Mean squared TD error over the batch, measured before the update. The old
+        // figure averaged over batch_size * num_actions although only one column per row
+        // is ever non-zero, so it read num_actions times too small.
+        let loss = squared_error / batch_size as f32;
 
-        // Train the network
-        self.q_network.train_minibatch(states.view(), target_q_values.view(), learning_rate);
-        
-        // Calculate loss for monitoring
-        let predictions = self.q_network.forward_batch(states.view());
-        let loss = (&predictions - &target_q_values).mapv(|x| x * x).mean()
-            .unwrap_or(f32::INFINITY);
-        
+        self.q_network.apply_output_errors(output_errors.view(), learning_rate);
+
         // Increment train steps
         self.train_steps += 1;
         
@@ -435,15 +481,15 @@ impl DqnAgent {
     
     /// Save the agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
     
     /// Load agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
+        agent.q_network.validate()?;
+        agent.target_network.validate()?;
+        // The generator is not serialized, so a loaded agent explores from a fresh one
         agent.rng = default_rng();
         Ok(agent)
     }
@@ -525,8 +571,8 @@ impl DqnAgentBuilder {
             }
             
             // Create networks with custom activations
-            let q_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer.clone());
-            let target_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer);
+            let q_network = NeuralNetwork::new(&self.layer_sizes, &activations, optimizer);
+            let target_network = q_network.clone_as_target();
             
             Ok(DqnAgent {
                 q_network,
@@ -614,10 +660,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "target_update_freq must be at least 1")]
+    #[should_panic(expected = "target_update_freq")]
     fn a_zero_target_update_frequency_is_rejected_at_construction() {
         let optimizer = OptimizerWrapper::SGD(SGD::new());
         DqnAgent::new(&[4, 16, 3], 0.0, optimizer, 0, false);
+    }
+
+    #[test]
+    fn try_new_reports_a_bad_configuration_instead_of_panicking() {
+        let optimizer = OptimizerWrapper::SGD(SGD::new());
+        assert!(DqnAgent::try_new(&[4, 16, 3], 0.0, optimizer.clone(), 0, false).is_err());
+        assert!(DqnAgent::try_new(&[], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4, 0, 3], 0.0, optimizer.clone(), 10, false).is_err());
+        assert!(DqnAgent::try_new(&[4, 16, 3], 0.0, optimizer, 10, false).is_ok());
     }
 
     #[test]

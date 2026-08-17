@@ -1,4 +1,6 @@
-use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis};
+use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis, Zip};
+
+use super::lstm::gate_pre_activation;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 
@@ -272,14 +274,45 @@ impl GRULayer {
     /// sequences. Only the last step stays in the cache, so this is for inference
     /// and for stepping an environment, not for training.
     pub fn forward_step(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        assert_eq!(
+            inputs.shape()[1],
+            self.input_size,
+            "input width must equal input_size"
+        );
         let batch_size = inputs.shape()[0];
-        let input_3d = inputs
-            .to_owned()
-            .into_shape((batch_size, 1, self.input_size))
-            .expect("input width must equal input_size");
 
-        let output = self.forward_sequence(input_3d.view());
-        output.slice(s![.., 0, ..]).to_owned()
+        // A different batch width means a different set of sequences, so the carried
+        // state does not belong to them
+        let h_t = match self.hidden_state.take() {
+            Some(h) if h.shape()[0] == batch_size => h,
+            _ => Array2::zeros((batch_size, self.hidden_size)),
+        };
+
+        let mut r_t = gate_pre_activation(inputs, &self.w_ir, &h_t, &self.w_hr, &self.b_r);
+        r_t.mapv_inplace(|v| 1.0 / (1.0 + (-v).exp()));
+
+        let mut z_t = gate_pre_activation(inputs, &self.w_iz, &h_t, &self.w_hz, &self.b_z);
+        z_t.mapv_inplace(|v| 1.0 / (1.0 + (-v).exp()));
+
+        // The new gate reads the reset-scaled hidden state rather than h itself
+        let reset_hidden = &r_t * &h_t;
+        let mut n_t = gate_pre_activation(inputs, &self.w_in, &reset_hidden, &self.w_hn, &self.b_n);
+        n_t.mapv_inplace(|v| v.tanh());
+
+        // h_t = (1 - z_t) * n_t + z_t * h_{t-1}, written into the new gate's array
+        let mut h_next = n_t;
+        Zip::from(&mut h_next)
+            .and(&z_t)
+            .and(&h_t)
+            .for_each(|n, &z, &h| *n = (1.0 - z) * *n + z * h);
+
+        self.hidden_state = Some(h_next.clone());
+
+        // No BPTT cache is written here, so a backward pass would otherwise read one
+        // belonging to an older, unrelated forward_sequence call
+        self.cache = None;
+
+        h_next
     }
 
     // Activation functions

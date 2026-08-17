@@ -215,3 +215,87 @@ fn benchmark_network_sizes() {
         );
     }
 }
+// The two tests below are the only ones here that assert. They run in the test profile,
+// which is unoptimized, so their ceilings are far above what a release build costs; they
+// exist to catch an order-of-magnitude regression, not to measure anything. Release
+// figures live in CHANGELOG.md.
+
+/// Time a closure, discarding a warmup and returning the mean in microseconds.
+fn mean_micros<F: FnMut()>(warmup: usize, iterations: usize, mut operation: F) -> f64 {
+    for _ in 0..warmup {
+        operation();
+    }
+    let start = Instant::now();
+    for _ in 0..iterations {
+        operation();
+    }
+    start.elapsed().as_nanos() as f64 / iterations as f64 / 1000.0
+}
+
+#[test]
+fn inference_stays_under_the_frame_budget() {
+    use athena::network::InferenceBuffers;
+
+    let mut network = NeuralNetwork::new(
+        &[8, 128, 128, 4],
+        &[Activation::Relu, Activation::Relu, Activation::Linear],
+        OptimizerWrapper::SGD(SGD::new()),
+    );
+    let state = Array1::from_shape_fn(8, |i| i as f32 * 0.1);
+    let mut buffers = InferenceBuffers::new();
+
+    let micros = mean_micros(100, 2_000, || {
+        std::hint::black_box(network.predict_into(state.view(), &mut buffers));
+    });
+
+    println!("predict on [8,128,128,4]: {:.2} us per call (test profile)", micros);
+
+    // Roughly 440 us in the test profile on the machine this was written on, against
+    // about 4 us in release. The ceiling is set several times over the observed figure
+    // so it survives a slow or loaded machine while still catching a 10x regression.
+    assert!(
+        micros < 2_500.0,
+        "one inference took {:.2} us in the test profile, an order of magnitude over budget",
+        micros
+    );
+}
+
+#[test]
+fn train_on_batch_stays_under_budget() {
+    use athena::optimizer::Adam;
+    use athena::replay_buffer::Experience;
+
+    let mut agent = DqnAgentBuilder::new()
+        .layer_sizes(&[8, 128, 128, 4])
+        .epsilon(0.0)
+        .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
+        .target_update_freq(1_000_000)
+        .use_double_dqn(true)
+        .build()
+        .expect("builder rejected a complete configuration");
+
+    let experiences: Vec<Experience> = (0..32)
+        .map(|i| Experience {
+            state: Array1::from_shape_fn(8, |j| ((i + j) as f32 * 0.05).sin()),
+            action: i % 4,
+            reward: 0.5,
+            next_state: Array1::from_shape_fn(8, |j| ((i * 2 + j) as f32 * 0.05).cos()),
+            done: i % 8 == 0,
+        })
+        .collect();
+
+    let micros = mean_micros(10, 60, || {
+        let batch: Vec<&Experience> = experiences.iter().collect();
+        agent.train_on_batch(&batch, 0.99, 1e-4).unwrap();
+    });
+
+    println!("train_on_batch [8,128,128,4] batch 32: {:.2} us (test profile)", micros);
+
+    // Roughly 11,000 us in the test profile, against a few hundred in release. Same
+    // reasoning as above: the ceiling catches a structural regression, not a slow day.
+    assert!(
+        micros < 45_000.0,
+        "one training step took {:.2} us in the test profile, an order of magnitude over budget",
+        micros
+    );
+}

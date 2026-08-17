@@ -1,3 +1,4 @@
+use ndarray::linalg::general_mat_mul;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use ndarray_rand::rand_distr::Uniform;
 use ndarray_rand::RandomExt;
@@ -9,10 +10,20 @@ use super::initialization::WeightInit;
 /// A fully connected (dense) layer in a neural network
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DenseLayer {
+    /// Stored `(input_size, output_size)`.
+    ///
+    /// So the pre-activation is `input.dot(&weights)` and a delta propagates back as
+    /// `adjusted_error.dot(&weights.t())`. Reversing this caused two panicking bugs in
+    /// this repository; check any new `.dot` against it. See `docs/conventions.md`.
     pub weights: Array2<f32>,
+    /// One per output, added to every row of the batch.
     pub biases: Array1<f32>,
     pub activation: Activation,
+    // Written by forward_batch for backward_batch to read. Skipped on the wire: they
+    // are as large as the batch that wrote them and hold fragments of the training data.
+    #[serde(skip)]
     pre_activation_output: Option<Array2<f32>>,
+    #[serde(skip)]
     inputs: Option<Array2<f32>>,
 }
 
@@ -56,6 +67,16 @@ impl DenseLayer {
         self
     }
 
+    /// Drop what the last forward pass stored for the backward pass.
+    ///
+    /// A layer that has been cleared cannot be backpropagated through until the next
+    /// forward pass. Worth doing before cloning or saving a network that is only going
+    /// to be used for inference: the caches are as large as the batch that wrote them.
+    pub fn clear_caches(&mut self) {
+        self.inputs = None;
+        self.pre_activation_output = None;
+    }
+
     pub fn with_biases(mut self, biases: Array1<f32>) -> Self {
         assert_eq!(biases.dim(), self.biases.dim());
         self.biases = biases;
@@ -73,10 +94,42 @@ impl LayerTrait for DenseLayer {
 
     fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
         self.inputs = Some(inputs.to_owned());
-        let mut outputs = inputs.dot(&self.weights) + &self.biases.to_owned().insert_axis(Axis(0));
+        // An Array1 broadcasts over the rows of an Array2, so the bias needs no copy
+        let mut outputs = inputs.dot(&self.weights);
+        outputs += &self.biases;
         self.pre_activation_output = Some(outputs.clone());
         self.activation.apply_batch(&mut outputs);
         outputs
+    }
+
+    fn forward_batch_into(&self, inputs: ArrayView2<f32>, out: &mut Array2<f32>) {
+        let rows = inputs.shape()[0];
+        let cols = self.weights.shape()[1];
+        if out.shape() != [rows, cols] {
+            *out = Array2::zeros((rows, cols));
+        }
+
+        // beta 0 overwrites out rather than accumulating, so a reused buffer needs no clear
+        general_mat_mul(1.0, &inputs, &self.weights, 0.0, out);
+        *out += &self.biases;
+        self.activation.apply_batch(out);
+    }
+
+    fn forward_into(&self, input: ArrayView1<f32>, out: &mut Array1<f32>) {
+        let cols = self.weights.shape()[1];
+        if out.len() != cols {
+            *out = Array1::zeros(cols);
+        }
+
+        // Weights are (input, output), so each input element scales one row of the
+        // matrix. Accumulating row by row walks memory in order; a matrix-vector product
+        // against the transpose reads down columns instead and measured 2.5x slower on a
+        // 256 by 256 layer.
+        out.assign(&self.biases);
+        for (k, &x) in input.iter().enumerate() {
+            out.scaled_add(x, &self.weights.row(k));
+        }
+        self.activation.apply(out);
     }
 
     fn backward(&self, output_error: ArrayView1<f32>) -> (Array2<f32>, Array1<f32>) {

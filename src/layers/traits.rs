@@ -26,7 +26,36 @@ pub trait Layer: Send + Sync {
     
     /// Perform forward propagation for a batch of inputs
     fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32>;
-    
+
+    /// Forward propagation that caches nothing, writing the result into `out`.
+    ///
+    /// Takes `&self`, so a layer behind an `Arc` can serve many callers at once, and
+    /// reuses `out` when it already has the right shape, so a per-frame call allocates
+    /// nothing. `backward_batch` will not work after this: it reads the caches that
+    /// `forward_batch` writes and this method deliberately does not.
+    ///
+    /// The default clones the layer and runs `forward_batch` on the copy, which is
+    /// correct but allocates. Implementations that can write straight into `out` should
+    /// override it.
+    fn forward_batch_into(&self, inputs: ArrayView2<f32>, out: &mut Array2<f32>) {
+        let mut scratch = self.clone_box();
+        *out = scratch.forward_batch(inputs);
+    }
+
+    /// Single-input form of `forward_batch_into`.
+    ///
+    /// Kept separate because a one-row matrix product is measurably slower than a
+    /// matrix-vector product on the same numbers, and a game asks for one action at a
+    /// time. The default routes through the batch version.
+    fn forward_into(&self, input: ArrayView1<f32>, out: &mut Array1<f32>) {
+        let mut batch = Array2::zeros((0, 0));
+        self.forward_batch_into(input.insert_axis(ndarray::Axis(0)), &mut batch);
+        let width = batch.shape()[1];
+        *out = batch
+            .into_shape((width,))
+            .expect("forward_batch_into returned more than one row");
+    }
+
     /// Gradients for a single output error.
     ///
     /// Returns `(weight_gradients, bias_gradients)`. Note that this one does not return

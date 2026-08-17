@@ -27,15 +27,32 @@
 //! - **Serialization**: Save and load trained models
 //! - **Optimizer Integration**: Works with any optimizer implementing the Optimizer trait
 
-use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView1, Axis, ArrayView2, Zip};
 use serde::{Serialize, Deserialize};
-use std::fs;
-use std::io::{Read, Write};
-use bincode::{serialize, deserialize};
 
 use crate::optimizer::{Optimizer, OptimizerWrapper};
 use crate::layers::{Layer, LayerTrait};
 use crate::activations::Activation;
+
+/// Scratch space for `NeuralNetwork::predict_into`.
+///
+/// Two buffers the network alternates between as it walks the layers. They grow to the
+/// widest layer on the first call and are reused after that, so a game loop holding one
+/// of these allocates nothing per frame. One instance serves one call at a time: give
+/// each thread its own.
+#[derive(Clone, Default, Debug)]
+pub struct InferenceBuffers {
+    front: Array2<f32>,
+    back: Array2<f32>,
+    front_row: Array1<f32>,
+    back_row: Array1<f32>,
+}
+
+impl InferenceBuffers {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 /// A Neural Network consisting of multiple layers, an optimizer, and methods for training
 /// and making predictions.
@@ -49,20 +66,57 @@ impl NeuralNetwork {
     /// Create a new neural network with the given layer sizes, activations, and optimizer.
     /// This function constructs a new neural network by creating layers with the specified sizes
     /// and activation functions. The optimizer is used for updating the weights and biases during training.
+    /// Panicking wrapper around `try_new`.
+    ///
+    /// Panics if `layer_sizes` has fewer than two entries, if `activations` does not have
+    /// exactly one fewer entry than `layer_sizes`, or if any size is zero. Use `try_new`
+    /// when the sizes come from a file, a config or anything else outside the program.
     pub fn new(layer_sizes: &[usize], activations: &[Activation], optimizer: OptimizerWrapper) -> Self {
-        assert_eq!(layer_sizes.len() - 1, activations.len());
-    
+        Self::try_new(layer_sizes, activations, optimizer)
+            .unwrap_or_else(|e| panic!("NeuralNetwork::new: {}", e))
+    }
+
+    /// Build a network, reporting a bad shape instead of panicking.
+    ///
+    /// `layer_sizes` needs at least an input and an output width, and `activations` one
+    /// entry per layer, which is one fewer than `layer_sizes`.
+    pub fn try_new(
+        layer_sizes: &[usize],
+        activations: &[Activation],
+        optimizer: OptimizerWrapper,
+    ) -> crate::error::Result<Self> {
+        // The subtraction below underflows on an empty slice, so check the length first
+        if layer_sizes.len() < 2 {
+            return Err(crate::error::AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!(
+                    "a network needs at least an input and an output width, got {} entries",
+                    layer_sizes.len()
+                ),
+            });
+        }
+
+        if activations.len() != layer_sizes.len() - 1 {
+            return Err(crate::error::AthenaError::dimension_mismatch(
+                format!("{} activations, one per layer", layer_sizes.len() - 1),
+                format!("{} activations", activations.len()),
+            ));
+        }
+
+        if let Some(position) = layer_sizes.iter().position(|&size| size == 0) {
+            return Err(crate::error::AthenaError::InvalidParameter {
+                name: "layer_sizes".to_string(),
+                reason: format!("width {} is zero", position),
+            });
+        }
+
         let layers = layer_sizes
             .windows(2)
             .zip(activations.iter())
-            .map(|(window, &activation)| {
-                let input_size = window[0];
-                let output_size = window[1];
-                Layer::new(input_size, output_size, activation)
-            })
+            .map(|(window, &activation)| Layer::new(window[0], window[1], activation))
             .collect::<Vec<_>>();
-    
-        NeuralNetwork { layers, optimizer }
+
+        Ok(NeuralNetwork { layers, optimizer })
     }
     
     /// Create an empty neural network
@@ -136,11 +190,106 @@ impl NeuralNetwork {
     /// This function computes the output of the neural network for each input vector in the batch
     /// by successively applying each layer's forward_batch function.
     pub fn forward_batch(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
-        let mut current_output = inputs.to_owned();
-        for layer in &mut self.layers {
+        // Feed the input straight into the first layer rather than copying it first
+        let mut layers = self.layers.iter_mut();
+        let mut current_output = match layers.next() {
+            Some(first) => first.forward_batch(inputs),
+            None => return inputs.to_owned(),
+        };
+        for layer in layers {
             current_output = layer.forward_batch(current_output.view());
         }
         current_output
+    }
+
+    /// Forward pass that caches nothing and takes `&self`.
+    ///
+    /// `forward` stores each layer's input and pre-activation output so `backward_batch`
+    /// can read them, which costs allocations on every call and forces `&mut self`. This
+    /// one does neither, so an `Arc<NeuralNetwork>` can serve every entity in a game at
+    /// once. It produces the same numbers as `forward`; what it does not do is leave the
+    /// network ready for a backward pass.
+    pub fn predict(&self, input: ArrayView1<f32>) -> Array1<f32> {
+        let mut buffers = InferenceBuffers::new();
+        // The borrow of the returned view ends here, leaving the result in `front_row`
+        let _ = self.predict_into(input, &mut buffers);
+        std::mem::take(&mut buffers.front_row)
+    }
+
+    /// Batch form of `predict`.
+    pub fn predict_batch(&self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        let mut buffers = InferenceBuffers::new();
+        // The borrow of the returned view ends here, leaving the result in `front`
+        let _ = self.predict_batch_into(inputs, &mut buffers);
+        std::mem::take(&mut buffers.front)
+    }
+
+    /// `predict` writing into caller-owned buffers, so a per-frame call allocates nothing
+    /// once the buffers have been sized by the first call.
+    ///
+    /// The returned view borrows `buffers`, so read or copy it before the next call.
+    pub fn predict_into<'b>(
+        &self,
+        input: ArrayView1<f32>,
+        buffers: &'b mut InferenceBuffers,
+    ) -> ArrayView1<'b, f32> {
+        let front = &mut buffers.front_row;
+        let back = &mut buffers.back_row;
+
+        let mut layers = self.layers.iter();
+        match layers.next() {
+            Some(first) => first.forward_into(input, front),
+            None => {
+                *front = input.to_owned();
+                return front.view();
+            }
+        }
+
+        for layer in layers {
+            layer.forward_into(front.view(), back);
+            std::mem::swap(front, back);
+        }
+
+        front.view()
+    }
+
+    /// Batch form of `predict_into`.
+    pub fn predict_batch_into<'b>(
+        &self,
+        inputs: ArrayView2<f32>,
+        buffers: &'b mut InferenceBuffers,
+    ) -> ArrayView2<'b, f32> {
+        let front = &mut buffers.front;
+        let back = &mut buffers.back;
+
+        let mut layers = self.layers.iter();
+        match layers.next() {
+            Some(first) => first.forward_batch_into(inputs, front),
+            None => {
+                *front = inputs.to_owned();
+                return front.view();
+            }
+        }
+
+        // Ping-pong between the two buffers so no layer reads what it is writing
+        for layer in layers {
+            layer.forward_batch_into(front.view(), back);
+            std::mem::swap(front, back);
+        }
+
+        front.view()
+    }
+
+    /// `predict` that reports a wrong input width instead of panicking inside ndarray.
+    pub fn try_predict(&self, input: ArrayView1<f32>) -> crate::error::Result<Array1<f32>> {
+        self.check_input_width(input.len())?;
+        Ok(self.predict(input))
+    }
+
+    /// Batch form of `try_predict`.
+    pub fn try_predict_batch(&self, inputs: ArrayView2<f32>) -> crate::error::Result<Array2<f32>> {
+        self.check_input_width(inputs.shape()[1])?;
+        Ok(self.predict_batch(inputs))
     }
 
     /// Compute gradients for the neural network's weights and biases for a batch of input vectors.
@@ -204,11 +353,89 @@ impl NeuralNetwork {
         output_errors: ArrayView2<f32>,
         learning_rate: f32,
     ) {
-        let outputs = self.forward_batch(inputs);
-        // train_minibatch computes outputs - targets, so this makes that difference
-        // exactly the error that was asked for
-        let targets = &outputs - &output_errors.to_owned();
-        self.train_minibatch(inputs, targets.view(), learning_rate);
+        let _ = self.forward_batch(inputs);
+        self.apply_output_errors(output_errors, learning_rate);
+    }
+
+    /// Move this network's parameters a fraction `tau` of the way toward `source`.
+    ///
+    /// `tau` 1.0 copies `source` exactly, 0.0 leaves this network untouched. Written in
+    /// place, so nothing is allocated, and the optimizer state is left alone: a target
+    /// network is assigned to, never trained.
+    ///
+    /// Layers past the end of `source` are not touched.
+    pub fn soft_update_from(&mut self, source: &NeuralNetwork, tau: f32) {
+        if tau >= 1.0 {
+            self.copy_parameters_from(source);
+            return;
+        }
+        if tau <= 0.0 {
+            return;
+        }
+
+        for (target, source) in self.layers.iter_mut().zip(source.layers.iter()) {
+            Zip::from(&mut target.weights)
+                .and(&source.weights)
+                .for_each(|t, &s| *t += tau * (s - *t));
+            Zip::from(&mut target.biases)
+                .and(&source.biases)
+                .for_each(|t, &s| *t += tau * (s - *t));
+        }
+    }
+
+    /// Copy `source`'s weights and biases into this network's existing arrays.
+    ///
+    /// Neither the optimizer state nor the layer caches come across, and nothing is
+    /// reallocated. This is what a hard target update wants; cloning the whole network
+    /// copies Adam's moment estimates for every parameter as well, for a network that is
+    /// never trained.
+    pub fn copy_parameters_from(&mut self, source: &NeuralNetwork) {
+        for (target, source) in self.layers.iter_mut().zip(source.layers.iter()) {
+            target.weights.assign(&source.weights);
+            target.biases.assign(&source.biases);
+        }
+    }
+
+    /// A copy of this network set up to serve as a target network.
+    ///
+    /// Same architecture and same starting parameters, but no forward-pass caches and a
+    /// plain SGD optimizer holding no state.
+    pub fn clone_as_target(&self) -> NeuralNetwork {
+        let mut copy = self.clone();
+        copy.optimizer = OptimizerWrapper::SGD(crate::optimizer::SGD::new());
+        for layer in copy.layers.iter_mut() {
+            layer.clear_caches();
+        }
+        copy
+    }
+
+    /// Backpropagate an error signal through the caches the last forward pass wrote,
+    /// and let the optimizer apply the result.
+    ///
+    /// Carries the same contract as `input_gradient_batch`: `forward_batch` must have run
+    /// on the inputs this error belongs to, immediately before, since the backward pass
+    /// reads the cached pre-activations. Calling it without that panics.
+    ///
+    /// This is what a caller already holding the outputs should use. `train_minibatch`
+    /// and the rest are this method with a forward pass in front.
+    pub fn apply_output_errors(&mut self, output_errors: ArrayView2<f32>, learning_rate: f32) {
+        let gradients = self.backward_batch(output_errors);
+        self.apply_gradients(gradients, learning_rate);
+    }
+
+    /// `apply_output_errors` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn apply_output_errors_clipped(
+        &mut self,
+        output_errors: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let mut gradients = self.backward_batch(output_errors);
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
     }
 
     /// Scale a set of gradients so their combined L2 norm is at most `max_norm`.
@@ -258,10 +485,7 @@ impl NeuralNetwork {
     ) -> f32 {
         let outputs = self.forward_batch(inputs);
         let output_errors = &outputs - &targets;
-        let mut gradients = self.backward_batch(output_errors.view());
-        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
-        self.apply_gradients(gradients, learning_rate);
-        norm
+        self.apply_output_errors_clipped(output_errors.view(), learning_rate, max_norm)
     }
 
     /// `train_policy_gradient` with the global gradient norm capped at `max_norm`.
@@ -275,10 +499,7 @@ impl NeuralNetwork {
         max_norm: f32,
     ) -> f32 {
         let _ = self.forward_batch(inputs);
-        let mut gradients = self.backward_batch(output_gradients);
-        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
-        self.apply_gradients(gradients, learning_rate);
-        norm
+        self.apply_output_errors_clipped(output_gradients, learning_rate, max_norm)
     }
 
     /// Train the neural network for a batch of input vectors and target outputs.
@@ -292,12 +513,7 @@ impl NeuralNetwork {
     ) {
         let outputs = self.forward_batch(inputs);
         let output_errors = &outputs - &targets;
-        let gradients = self.backward_batch(output_errors.view());
-    
-        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
-            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
-            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
-        }
+        self.apply_output_errors(output_errors.view(), learning_rate);
     }
 
     /// Train using policy gradient method.
@@ -317,38 +533,70 @@ impl NeuralNetwork {
         output_gradients: ArrayView2<f32>,
         learning_rate: f32,
     ) {
-        // Forward pass to cache activations
+        // Forward pass to cache activations, then backpropagate the given gradient
+        // directly instead of computing output - target like train_minibatch
         let _ = self.forward_batch(inputs);
-
-        // Backward pass using the provided gradients directly
-        // (instead of computing output - target like in train_minibatch)
-        let gradients = self.backward_batch(output_gradients);
-
-        // Apply gradients using optimizer
-        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
-            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
-            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
-        }
+        self.apply_output_errors(output_gradients, learning_rate);
     }
 
     /// Save the neural network's state to a file.
     /// This function serializes the neural network, including its layers and optimizer, and writes
     /// the serialized data to a file at the specified path.
     pub fn save(&self, path: &str) -> crate::error::Result<()> {
-        let serialized = serialize(self)?;
-        let mut file = fs::File::create(path)?;
-        file.write_all(&serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load a neural network from a file.
     /// This function reads the serialized data from a file at the specified path, deserializes it,
     /// and constructs a new neural network with the loaded state.
     pub fn load(path: &str) -> crate::error::Result<Self> {
-        let mut file = fs::File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        let deserialized: Self = deserialize(&buffer)?;
-        Ok(deserialized)
+        let network: Self = crate::serialization::load_from_file(path)?;
+        network.validate()?;
+        Ok(network)
+    }
+
+    /// Check that this network could have been built by `new`.
+    ///
+    /// A loaded file is untrusted input: a layer whose bias length disagrees with its
+    /// weight matrix, or a layer whose input width does not match the previous layer's
+    /// output, would panic inside ndarray on the first forward pass instead of here.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if self.layers.is_empty() {
+            return Err(crate::error::AthenaError::SerializationError(
+                "network has no layers".to_string(),
+            ));
+        }
+
+        for (i, layer) in self.layers.iter().enumerate() {
+            let (input_width, output_width) = layer.weights.dim();
+            if input_width == 0 || output_width == 0 {
+                return Err(crate::error::AthenaError::SerializationError(format!(
+                    "layer {} has a {} by {} weight matrix",
+                    i, input_width, output_width
+                )));
+            }
+            if layer.biases.len() != output_width {
+                return Err(crate::error::AthenaError::SerializationError(format!(
+                    "layer {} has {} outputs but {} biases",
+                    i,
+                    output_width,
+                    layer.biases.len()
+                )));
+            }
+            if i > 0 {
+                let previous = self.layers[i - 1].weights.dim().1;
+                if input_width != previous {
+                    return Err(crate::error::AthenaError::SerializationError(format!(
+                        "layer {} takes {} inputs but layer {} produces {}",
+                        i,
+                        input_width,
+                        i - 1,
+                        previous
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 }

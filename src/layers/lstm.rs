@@ -1,4 +1,36 @@
-use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis};
+use ndarray::linalg::general_mat_mul;
+use ndarray::{Array1, Array2, Array3, ArrayView2, ArrayView3, Axis, Zip};
+
+/// `x @ w_x + h @ w_h + b` in one allocation, which is what every recurrent gate needs
+/// before its activation.
+pub(crate) fn gate_pre_activation(
+    x: ArrayView2<f32>,
+    w_x: &Array2<f32>,
+    h: &Array2<f32>,
+    w_h: &Array2<f32>,
+    b: &Array1<f32>,
+) -> Array2<f32> {
+    let rows = x.shape()[0];
+    let mut out = Array2::zeros((rows, w_x.shape()[1]));
+    out += b;
+
+    if rows == 1 {
+        // One sequence at a time is what a game loop does, and a one-row matrix product
+        // is measurably slower than accumulating weight rows directly
+        let mut row = out.row_mut(0);
+        for (k, &v) in x.row(0).iter().enumerate() {
+            row.scaled_add(v, &w_x.row(k));
+        }
+        for (k, &v) in h.row(0).iter().enumerate() {
+            row.scaled_add(v, &w_h.row(k));
+        }
+    } else {
+        general_mat_mul(1.0, &x, w_x, 1.0, &mut out);
+        general_mat_mul(1.0, h, w_h, 1.0, &mut out);
+    }
+
+    out
+}
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 
@@ -332,14 +364,56 @@ impl LSTMLayer {
     /// between sequences. Only the last step stays in the cache, so this is for
     /// inference and for stepping an environment, not for training.
     pub fn forward_step(&mut self, inputs: ArrayView2<f32>) -> Array2<f32> {
+        assert_eq!(
+            inputs.shape()[1],
+            self.input_size,
+            "input width must equal input_size"
+        );
         let batch_size = inputs.shape()[0];
-        let input_3d = inputs
-            .to_owned()
-            .into_shape((batch_size, 1, self.input_size))
-            .expect("input width must equal input_size");
 
-        let output = self.forward_sequence(input_3d.view());
-        output.slice(s![.., 0, ..]).to_owned()
+        // A different batch width means a different set of sequences, so the carried
+        // state does not belong to them
+        let mut c_t = match self.cell_state.take() {
+            Some(c) if c.shape()[0] == batch_size => c,
+            _ => Array2::zeros((batch_size, self.hidden_size)),
+        };
+        let h_t = match self.hidden_state.take() {
+            Some(h) if h.shape()[0] == batch_size => h,
+            _ => Array2::zeros((batch_size, self.hidden_size)),
+        };
+
+        let mut i_t = gate_pre_activation(inputs, &self.w_ii, &h_t, &self.w_hi, &self.b_i);
+        i_t.mapv_inplace(|v| 1.0 / (1.0 + (-v).exp()));
+
+        let mut f_t = gate_pre_activation(inputs, &self.w_if, &h_t, &self.w_hf, &self.b_f);
+        f_t.mapv_inplace(|v| 1.0 / (1.0 + (-v).exp()));
+
+        let mut g_t = gate_pre_activation(inputs, &self.w_ig, &h_t, &self.w_hg, &self.b_g);
+        g_t.mapv_inplace(|v| v.tanh());
+
+        let mut o_t = gate_pre_activation(inputs, &self.w_io, &h_t, &self.w_ho, &self.b_o);
+        o_t.mapv_inplace(|v| 1.0 / (1.0 + (-v).exp()));
+
+        // c_t = f_t * c_{t-1} + i_t * g_t, then h_t = o_t * tanh(c_t), both in place
+        Zip::from(&mut c_t)
+            .and(&f_t)
+            .and(&i_t)
+            .and(&g_t)
+            .for_each(|c, &f, &i, &g| *c = f * *c + i * g);
+
+        let mut h_next = o_t;
+        Zip::from(&mut h_next)
+            .and(&c_t)
+            .for_each(|h, &c| *h *= c.tanh());
+
+        self.hidden_state = Some(h_next.clone());
+        self.cell_state = Some(c_t);
+
+        // No BPTT cache is written here, so a backward pass would otherwise read one
+        // belonging to an older, unrelated forward_sequence call
+        self.cache = None;
+
+        h_next
     }
 
     // Activation functions

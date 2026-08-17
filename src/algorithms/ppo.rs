@@ -308,7 +308,7 @@ impl PPOAgent {
 
             // Create gradient arrays
             let mut policy_gradients = Array2::zeros((batch_size, self.action_size));
-            let mut value_targets = Array2::zeros((batch_size, 1));
+            let mut value_errors = Array2::zeros((batch_size, 1));
 
             for i in 0..batch_size {
                 let logits = policy_outputs.row(i).to_owned();
@@ -327,7 +327,7 @@ impl PPOAgent {
                 // Value loss
                 let value_pred = value_outputs[[i, 0]];
                 value_loss += (value_pred - buffer.returns[i]).powi(2);
-                value_targets[[i, 0]] = buffer.returns[i];
+                value_errors[[i, 0]] = value_pred - buffer.returns[i];
 
                 // Entropy of this row, needed both for reporting and for the entropy
                 // gradient below
@@ -380,28 +380,20 @@ impl PPOAgent {
             // the same thing the coefficient does in a shared-trunk implementation.
             let value_lr = learning_rate * self.value_coeff;
 
+            // Both networks were forwarded at the top of the epoch, so the errors go
+            // back through those caches without a second pass over the states
             match self.max_grad_norm {
                 Some(max_norm) => {
-                    self.value.train_minibatch_clipped(
-                        states.view(),
-                        value_targets.view(),
-                        value_lr,
-                        max_norm,
-                    );
-                    self.policy.train_policy_gradient_clipped(
-                        states.view(),
+                    self.value.apply_output_errors_clipped(value_errors.view(), value_lr, max_norm);
+                    self.policy.apply_output_errors_clipped(
                         policy_gradients.view(),
                         learning_rate,
                         max_norm,
                     );
                 }
                 None => {
-                    self.value.train_minibatch(states.view(), value_targets.view(), value_lr);
-                    self.policy.train_policy_gradient(
-                        states.view(),
-                        policy_gradients.view(),
-                        learning_rate,
-                    );
+                    self.value.apply_output_errors(value_errors.view(), value_lr);
+                    self.policy.apply_output_errors(policy_gradients.view(), learning_rate);
                 }
             }
         }
@@ -415,15 +407,12 @@ impl PPOAgent {
 
     /// Save agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
         agent.rng = default_rng();
         Ok(agent)
     }

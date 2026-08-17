@@ -16,7 +16,7 @@ This guide provides detailed explanations of the reinforcement learning algorith
 
 DQN combines Q-learning with deep neural networks to handle high-dimensional state spaces. The key innovation is using a neural network to approximate the Q-function:
 
-```
+```text
 Q(s, a; θ) ≈ Q*(s, a)
 ```
 
@@ -32,18 +32,42 @@ Where `Q*` is the optimal action-value function and `θ` are the network paramet
 
 ```rust
 use athena::agent::DqnAgent;
-use athena::optimizer::{OptimizerWrapper, Adam};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use athena::replay_buffer::{Experience, ReplayBuffer};
+use athena::rng::seeded_rng;
+use ndarray::Array1;
 
-// Create DQN agent
-let layer_sizes = &[state_dim, 128, 128, action_dim];
-let optimizer = OptimizerWrapper::Adam(Adam::new(0.001, 0.9, 0.999, 1e-8));
-let agent = DqnAgent::new(
-    layer_sizes,
+let (state_dim, action_dim) = (8, 4);
+
+// Adam::new takes (layers, beta1, beta2, epsilon) and holds no learning rate.
+// An empty slice is fine: it grows its per-layer state on first use.
+let optimizer = OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8));
+
+let mut agent = DqnAgent::new(
+    &[state_dim, 128, 128, action_dim],
     0.1,        // epsilon (exploration rate)
     optimizer,
-    1000,       // target update frequency
-    true        // use double DQN
+    1000,       // training steps between target network refreshes
+    true,       // Double DQN
 );
+
+// act(&mut self, state) -> Result<usize>
+let state: Array1<f32> = Array1::zeros(state_dim);
+let action = agent.act(state.view()).unwrap();
+
+// train_on_batch(&[&Experience], gamma, learning_rate) -> Result<f32>,
+// returning the mean squared TD error over the batch
+let mut buffer = ReplayBuffer::new(1000);
+buffer.add(Experience {
+    state,
+    action,
+    reward: 1.0,
+    next_state: Array1::zeros(state_dim),
+    done: false,
+});
+let mut rng = seeded_rng(1);
+let batch = buffer.sample_with(1, &mut rng);
+let _loss = agent.train_on_batch(&batch, 0.99, 1e-3).unwrap();
 ```
 
 ### Hyperparameters
@@ -70,7 +94,7 @@ A2C is a synchronous variant of the actor-critic algorithm that combines:
 - **Critic**: Value network V(s; φ) that estimates state values
 
 The advantage function reduces variance:
-```
+```text
 A(s, a) = Q(s, a) - V(s)
 ```
 
@@ -83,18 +107,39 @@ A(s, a) = Q(s, a) - V(s)
 ### Implementation in Athena
 
 ```rust
-use athena::algorithms::{A2CAgent, A2CBuilder};
+use athena::algorithms::{A2CBuilder, A2CExperience};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use ndarray::Array1;
 
-let agent = A2CBuilder::new()
-    .input_dim(state_dim)
-    .action_dim(action_dim)
-    .hidden_dims(vec![256, 256])
+let (state_dim, action_dim) = (8, 4);
+
+// The dimensions go in new; the builder sizes the hidden layers.
+// .optimizer is required: build() errors without it.
+let mut agent = A2CBuilder::new(state_dim, action_dim)
+    .hidden_sizes(vec![256, 256])
+    .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
     .gamma(0.99)           // discount factor
     .n_steps(5)            // steps before update
     .entropy_coeff(0.01)   // exploration bonus
-    .value_coeff(0.5)      // value loss weight
+    .value_coeff(0.5)      // scales the critic's step
     .build()
     .unwrap();
+
+// act(&mut self, state) -> Result<(action, log_prob)>
+let state: Array1<f32> = Array1::zeros(state_dim);
+let (action, log_prob) = agent.act(state.view()).unwrap();
+
+// train(&[A2CExperience], learning_rate) -> Result<(actor_loss, critic_loss)>
+let experiences = vec![A2CExperience {
+    state: state.clone(),
+    action,
+    reward: 1.0,
+    next_state: state.clone(),
+    done: true,
+    log_prob,
+    value: agent.get_value(state.view()),
+}];
+let _ = agent.train(&experiences, 7e-4).unwrap();
 ```
 
 ### Hyperparameters
@@ -118,7 +163,7 @@ let agent = A2CBuilder::new()
 
 PPO improves on vanilla policy gradient by limiting policy updates to prevent destructive large updates:
 
-```
+```text
 L^CLIP(θ) = min(r_t(θ)A_t, clip(r_t(θ), 1-ε, 1+ε)A_t)
 ```
 
@@ -133,17 +178,40 @@ Where r_t(θ) is the probability ratio between new and old policies.
 ### Implementation in Athena
 
 ```rust
-use athena::algorithms::{PPOAgent, PPOBuilder};
+use athena::algorithms::{PPOBuilder, PPORolloutBuffer};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use ndarray::Array1;
 
-let agent = PPOBuilder::new()
-    .input_dim(state_dim)
-    .action_dim(action_dim)
-    .hidden_dims(vec![256, 256])
-    .clip_epsilon(0.2)     // clipping parameter
-    .n_epochs(10)          // epochs per update
-    .minibatch_size(64)    // SGD batch size
+let (state_dim, action_dim) = (8, 4);
+
+let mut agent = PPOBuilder::new(state_dim, action_dim)
+    .hidden_sizes(vec![256, 256])
+    .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
+    .gamma(0.99)
+    .clip_param(0.2)       // the clipping parameter, called clip_param here
+    .entropy_coeff(0.01)
+    .value_coeff(0.5)
     .build()
     .unwrap();
+
+// PPO collects a rollout, computes advantages, then updates several times over it.
+// act(&mut self, state) -> Result<(action, log_prob, value)>
+let mut buffer = PPORolloutBuffer::new();
+let state: Array1<f32> = Array1::zeros(state_dim);
+
+for _ in 0..8 {
+    let (action, log_prob, value) = agent.act(state.view()).unwrap();
+    buffer.states.push(state.clone());
+    buffer.actions.push(action);
+    buffer.rewards.push(1.0);
+    buffer.values.push(value);
+    buffer.log_probs.push(log_prob);
+    buffer.dones.push(false);
+}
+
+let last_value = agent.get_value(state.view());
+agent.compute_gae(&mut buffer, last_value);
+let _ = agent.update(&buffer, 3e-4).unwrap();
 ```
 
 ### Hyperparameters
@@ -167,7 +235,7 @@ let agent = PPOBuilder::new()
 
 SAC maximizes both expected reward and policy entropy:
 
-```
+```text
 J(π) = E[Σ γ^t (r_t + αH(π(·|s_t)))]
 ```
 
@@ -182,17 +250,36 @@ This encourages exploration and robustness to model errors.
 ### Implementation in Athena
 
 ```rust
-use athena::algorithms::{SACAgent, SACBuilder};
+use athena::algorithms::{SACBuilder, SACExperience};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use ndarray::Array1;
 
-let agent = SACBuilder::new()
-    .input_dim(state_dim)
-    .action_dim(action_dim)
-    .hidden_dims(vec![256, 256])
+let (state_dim, action_dim) = (8, 2);
+
+let mut agent = SACBuilder::new(state_dim, action_dim)
+    .hidden_sizes(vec![256, 256])
+    .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
+    .gamma(0.99)
     .alpha(0.2)            // initial temperature
     .tau(0.005)            // soft update rate
     .auto_alpha(true)      // automatic tuning
     .build()
     .unwrap();
+
+// act(&mut self, state, deterministic) -> Result<Array1<f32>>.
+// Pass true when evaluating: false samples from the policy.
+let state: Array1<f32> = Array1::zeros(state_dim);
+let action = agent.act(state.view(), false).unwrap();
+
+// update(&[SACExperience], learning_rate) -> Result<(q_loss, policy_loss, alpha)>
+let batch = vec![SACExperience {
+    state: state.clone(),
+    action,
+    reward: 1.0,
+    next_state: state.clone(),
+    done: true,
+}];
+let _ = agent.update(&batch, 3e-4).unwrap();
 ```
 
 ### Hyperparameters
@@ -228,17 +315,37 @@ TD3 addresses overestimation in actor-critic methods through:
 ### Implementation in Athena
 
 ```rust
-use athena::algorithms::{TD3Agent, TD3Builder};
+use athena::algorithms::{TD3Builder, TD3Experience};
+use athena::optimizer::{Adam, OptimizerWrapper};
+use ndarray::Array1;
 
-let agent = TD3Builder::new()
-    .input_dim(state_dim)
-    .action_dim(action_dim)
-    .hidden_dims(vec![256, 256])
-    .policy_delay(2)       // update actor every 2 critic updates
-    .noise_std(0.2)        // target policy noise
-    .noise_clip(0.5)       // noise clipping
+let (state_dim, action_dim) = (8, 2);
+
+let mut agent = TD3Builder::new(state_dim, action_dim)
+    .hidden_sizes(vec![256, 256])
+    .optimizer(OptimizerWrapper::Adam(Adam::new(&[], 0.9, 0.999, 1e-8)))
+    .gamma(0.99)
+    .tau(0.005)
+    .policy_delay(2)          // update the actor every 2 critic updates
+    .action_bounds(-1.0, 1.0) // the range actions are squashed into
     .build()
     .unwrap();
+
+// act(&mut self, state, add_noise) -> Result<Array1<f32>>.
+// Pass false when evaluating.
+let state: Array1<f32> = Array1::zeros(state_dim);
+let action = agent.act(state.view(), true).unwrap();
+
+// update(&[TD3Experience], actor_lr, critic_lr) -> Result<(critic_loss, Option<actor_loss>)>.
+// The actor loss is None on the steps where the policy update is delayed.
+let batch = vec![TD3Experience {
+    state: state.clone(),
+    action,
+    reward: 1.0,
+    next_state: state.clone(),
+    done: true,
+}];
+let _ = agent.update(&batch, 3e-4, 3e-4).unwrap();
 ```
 
 ### Hyperparameters
@@ -271,32 +378,46 @@ let agent = TD3Builder::new()
 
 ### 1. Observation Normalization
 ```rust
-// Normalize observations to zero mean, unit variance
-let normalized = (obs - mean) / (std + 1e-8);
+use ndarray::array;
+
+let obs = array![120.0f32, 0.4, -30.0];
+let mean = array![100.0f32, 0.5, 0.0];
+let std = array![50.0f32, 0.25, 20.0];
+
+let normalized = (&obs - &mean) / (&std + 1e-8);
 ```
 
 ### 2. Reward Scaling
 ```rust
-// Scale rewards to reasonable range
+let reward = 250.0f32;
 let scaled_reward = reward / 100.0;  // environment-specific
+# assert_eq!(scaled_reward, 2.5);
 ```
 
 ### 3. Learning Rate Scheduling
+
+`LearningRateScheduler` is an enum, not a set of constructors.
+
 ```rust
 use athena::optimizer::LearningRateScheduler;
 
-let scheduler = LearningRateScheduler::exponential(
+let scheduler = LearningRateScheduler::ExponentialDecay {
     initial_lr: 3e-4,
-    decay_rate: 0.99,
-    decay_steps: 1000
-);
+    decay_rate: 0.999,
+};
+let _lr_at_step_1000 = scheduler.get_lr(1000);
 ```
 
 ### 4. Gradient Clipping
+
+`GradientClipper` is an enum too. For a whole network at once,
+`NeuralNetwork::train_minibatch_clipped` applies the global norm and returns the norm
+before clipping, which is worth logging when training diverges.
+
 ```rust
 use athena::optimizer::GradientClipper;
 
-let clipper = GradientClipper::new(max_norm: 0.5);
+let _clipper = GradientClipper::ClipByGlobalNorm { max_norm: 0.5 };
 ```
 
 ## Debugging Training

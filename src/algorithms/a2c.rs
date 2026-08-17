@@ -221,23 +221,21 @@ impl A2CAgent {
         // Train critic network. value_coeff scales its step: the actor and critic are
         // separate networks, so there is no joint loss for the coefficient to weight.
         let critic_lr = learning_rate * self.value_coeff;
+
+        // One forward pass serves both the reported loss and the update: the error it
+        // produces goes straight back through the caches it just wrote
+        let critic_outputs = self.critic.forward_batch(states.view());
+        let critic_errors = &critic_outputs - &critic_targets;
+        let critic_loss = critic_errors.mapv(|x| x * x).mean().unwrap_or(0.0);
+
         match self.max_grad_norm {
             Some(max_norm) => {
-                self.critic.train_minibatch_clipped(
-                    states.view(),
-                    critic_targets.view(),
-                    critic_lr,
-                    max_norm,
-                );
+                self.critic.apply_output_errors_clipped(critic_errors.view(), critic_lr, max_norm);
             }
             None => {
-                self.critic.train_minibatch(states.view(), critic_targets.view(), critic_lr);
+                self.critic.apply_output_errors(critic_errors.view(), critic_lr);
             }
         }
-
-        // Compute critic loss for reporting
-        let critic_outputs = self.critic.forward_batch(states.view());
-        let critic_loss = (&critic_outputs - &critic_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
         // Actor update: policy gradient
         //
@@ -297,22 +295,18 @@ impl A2CAgent {
         entropy /= batch_size as f32;
         let total_actor_loss = actor_loss - self.entropy_coeff * entropy;
 
-        // Train actor using policy gradient method
+        // The actor forward pass above wrote the caches this gradient travels back
+        // through, so there is nothing to forward again
         match self.max_grad_norm {
             Some(max_norm) => {
-                self.actor.train_policy_gradient_clipped(
-                    states.view(),
+                self.actor.apply_output_errors_clipped(
                     policy_gradients.view(),
                     learning_rate,
                     max_norm,
                 );
             }
             None => {
-                self.actor.train_policy_gradient(
-                    states.view(),
-                    policy_gradients.view(),
-                    learning_rate,
-                );
+                self.actor.apply_output_errors(policy_gradients.view(), learning_rate);
             }
         }
 
@@ -353,15 +347,12 @@ impl A2CAgent {
 
     /// Save the agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load an agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
         agent.rng = default_rng();
         Ok(agent)
     }

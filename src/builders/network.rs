@@ -8,6 +8,17 @@ use crate::error::{Result, AthenaError};
 pub struct NetworkBuilder {
     layers: Vec<Layer>,
     optimizer: Option<OptimizerWrapper>,
+    /// Deferred until `build`, so the choice can be made before any layer is added.
+    /// Adam and RMSProp size their state from the layers, which do not exist yet when
+    /// `with_adam` is the first call in the chain.
+    pending_optimizer: Option<PendingOptimizer>,
+}
+
+/// An optimizer choice recorded before the layers were known.
+#[derive(Clone, Copy)]
+enum PendingOptimizer {
+    Adam { beta1: f32, beta2: f32, epsilon: f32 },
+    RMSProp { beta: f32, epsilon: f32 },
 }
 
 impl NetworkBuilder {
@@ -16,6 +27,7 @@ impl NetworkBuilder {
         NetworkBuilder {
             layers: Vec::new(),
             optimizer: None,
+            pending_optimizer: None,
         }
     }
     
@@ -51,30 +63,33 @@ impl NetworkBuilder {
     /// Set the optimizer to SGD
     pub fn with_sgd(mut self) -> Self {
         self.optimizer = Some(OptimizerWrapper::SGD(SGD::new()));
+        self.pending_optimizer = None;
         self
     }
     
-    /// Set the optimizer to Adam
+    /// Set the optimizer to Adam.
+    ///
+    /// The choice is recorded and the optimizer is built in `build`, so this works
+    /// whether it comes before or after the layers.
     pub fn with_adam(mut self, beta1: f32, beta2: f32, epsilon: f32) -> Self {
-        if !self.layers.is_empty() {
-            let adam = Adam::new(&self.layers, beta1, beta2, epsilon);
-            self.optimizer = Some(OptimizerWrapper::Adam(adam));
-        }
+        self.optimizer = None;
+        self.pending_optimizer = Some(PendingOptimizer::Adam { beta1, beta2, epsilon });
         self
     }
     
-    /// Set the optimizer to RMSProp
+    /// Set the optimizer to RMSProp.
+    ///
+    /// Same as `with_adam`: the order in the chain does not matter.
     pub fn with_rmsprop(mut self, beta: f32, epsilon: f32) -> Self {
-        if !self.layers.is_empty() {
-            let rmsprop = RMSProp::new(&self.layers, beta, epsilon);
-            self.optimizer = Some(OptimizerWrapper::RMSProp(rmsprop));
-        }
+        self.optimizer = None;
+        self.pending_optimizer = Some(PendingOptimizer::RMSProp { beta, epsilon });
         self
     }
     
     /// Set a custom optimizer
     pub fn with_optimizer(mut self, optimizer: OptimizerWrapper) -> Self {
         self.optimizer = Some(optimizer);
+        self.pending_optimizer = None;
         self
     }
     
@@ -87,10 +102,22 @@ impl NetworkBuilder {
             });
         }
         
-        let optimizer = self.optimizer.ok_or_else(|| AthenaError::InvalidParameter {
-            name: "optimizer".to_string(),
-            reason: "Optimizer not specified".to_string(),
-        })?;
+        // Now that the layers are known, an Adam or RMSProp choice can be sized
+        let optimizer = match (self.optimizer, self.pending_optimizer) {
+            (Some(optimizer), _) => optimizer,
+            (None, Some(PendingOptimizer::Adam { beta1, beta2, epsilon })) => {
+                OptimizerWrapper::Adam(Adam::new(&self.layers, beta1, beta2, epsilon))
+            }
+            (None, Some(PendingOptimizer::RMSProp { beta, epsilon })) => {
+                OptimizerWrapper::RMSProp(RMSProp::new(&self.layers, beta, epsilon))
+            }
+            (None, None) => {
+                return Err(AthenaError::InvalidParameter {
+                    name: "optimizer".to_string(),
+                    reason: "Optimizer not specified".to_string(),
+                })
+            }
+        };
         
         Ok(NeuralNetwork::new_empty()
             .with_layers(self.layers)

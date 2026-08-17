@@ -146,8 +146,9 @@ impl SACAgent {
 
         let q1 = NeuralNetwork::new(&q_sizes, &q_activations, optimizer.clone());
         let q2 = NeuralNetwork::new(&q_sizes, &q_activations, optimizer);
-        let q1_target = q1.clone();
-        let q2_target = q2.clone();
+        // Target networks are only ever assigned to, so they hold no optimizer state
+        let q1_target = q1.clone_as_target();
+        let q2_target = q2.clone_as_target();
 
         let target_entropy = -(action_size as f32);
 
@@ -170,7 +171,7 @@ impl SACAgent {
 
     /// Select action using current policy
     pub fn act(&mut self, state: ArrayView1<f32>, deterministic: bool) -> Result<Array1<f32>> {
-        let output = self.actor.forward(state);
+        let output = self.actor.predict(state);
         let action_size = output.len() / 2;
 
         let mean = output.slice(ndarray::s![..action_size]).to_owned();
@@ -201,7 +202,7 @@ impl SACAgent {
     /// loses precision near +/-1. Keeping the noise lets the policy gradient treat
     /// the action as differentiable in the actor's own outputs.
     fn sample_with_log_prob(&mut self, state: ArrayView1<f32>) -> Result<PolicySample> {
-        let output = self.actor.forward(state);
+        let output = self.actor.predict(state);
         let action_size = output.len() / 2;
 
         let mut action = Array1::zeros(action_size);
@@ -238,8 +239,8 @@ impl SACAgent {
     /// Get Q-value for a state-action pair
     pub fn get_q_value(&mut self, state: ArrayView1<f32>, action: ArrayView1<f32>) -> (f32, f32) {
         let sa_concat = concatenate(state, action);
-        let q1 = self.q1.forward(sa_concat.view())[0];
-        let q2 = self.q2.forward(sa_concat.view())[0];
+        let q1 = self.q1.predict(sa_concat.view())[0];
+        let q2 = self.q2.predict(sa_concat.view())[0];
         (q1, q2)
     }
 
@@ -282,8 +283,8 @@ impl SACAgent {
 
             // Compute target Q-value using target networks
             let sa_concat_next = concatenate(next_state, next_action.view());
-            let target_q1 = self.q1_target.forward(sa_concat_next.view())[0];
-            let target_q2 = self.q2_target.forward(sa_concat_next.view())[0];
+            let target_q1 = self.q1_target.predict(sa_concat_next.view())[0];
+            let target_q2 = self.q2_target.predict(sa_concat_next.view())[0];
 
             // Use minimum Q-value (clipped double Q-learning) with entropy bonus
             let target_q = target_q1.min(target_q2) - self.alpha * next_log_prob;
@@ -301,17 +302,18 @@ impl SACAgent {
         // Convert Q inputs to batch array
         let q_inputs = stack_arrays(q1_inputs.iter().map(|a| a.view()).collect());
 
-        // Train Q1 network
-        self.q1.train_minibatch(q_inputs.view(), q1_targets.view(), learning_rate);
-
-        // Train Q2 network
-        self.q2.train_minibatch(q_inputs.view(), q2_targets.view(), learning_rate);
-
-        // Compute Q-loss for reporting
+        // One forward pass per critic serves both the reported loss and the update
         let q1_outputs = self.q1.forward_batch(q_inputs.view());
+        let q1_errors = &q1_outputs - &q1_targets;
+        let q1_loss = q1_errors.mapv(|x| x * x).mean().unwrap_or(0.0);
+        self.q1.apply_output_errors(q1_errors.view(), learning_rate);
+
         let q2_outputs = self.q2.forward_batch(q_inputs.view());
-        let q_loss = (&q1_outputs - &q1_targets).mapv(|x| x * x).mean().unwrap_or(0.0)
-                   + (&q2_outputs - &q2_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
+        let q2_errors = &q2_outputs - &q2_targets;
+        let q2_loss = q2_errors.mapv(|x| x * x).mean().unwrap_or(0.0);
+        self.q2.apply_output_errors(q2_errors.view(), learning_rate);
+
+        let q_loss = q1_loss + q2_loss;
 
         // Policy update, by the reparameterized policy gradient.
         //
@@ -327,8 +329,6 @@ impl SACAgent {
         //   dL/dlog_std = dL/du * std * eps  -  alpha
         //                                       \_ the -log(std) term in log pi _/
 
-        let actor_outputs = self.actor.forward_batch(states.view());
-
         // Sample a fresh action per state, keeping the noise that produced it
         let mut sampled_actions = Array2::zeros((batch_size, self.action_size));
         let mut noises = Array2::zeros((batch_size, self.action_size));
@@ -340,6 +340,11 @@ impl SACAgent {
             noises.row_mut(i).assign(&sample.noise);
             log_probs[i] = sample.log_prob;
         }
+
+        // After the sampling loop, so the caches this leaves behind are the ones the
+        // actor gradient travels back through. The critic passes below touch different
+        // networks and leave them alone.
+        let actor_outputs = self.actor.forward_batch(states.view());
 
         // dQ/da, taken from whichever critic gives the smaller value for that sample.
         // forward_batch first, the backward pass reads its cached pre-activations.
@@ -397,7 +402,7 @@ impl SACAgent {
 
         // Average over the batch, then apply the gradient
         let actor_errors = actor_errors / batch_size as f32;
-        self.actor.train_with_output_errors(states.view(), actor_errors.view(), learning_rate);
+        self.actor.apply_output_errors(actor_errors.view(), learning_rate);
 
         // Temperature update, when auto_alpha is set.
         //
@@ -425,30 +430,18 @@ impl SACAgent {
 
     /// Soft update target networks
     fn soft_update(&mut self) {
-        // Update Q1 target
-        for (target, source) in self.q1_target.layers.iter_mut().zip(self.q1.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
-
-        // Update Q2 target
-        for (target, source) in self.q2_target.layers.iter_mut().zip(self.q2.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
+        self.q1_target.soft_update_from(&self.q1, self.tau);
+        self.q2_target.soft_update_from(&self.q2, self.tau);
     }
 
     /// Save agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
         agent.rng = default_rng();
         Ok(agent)
     }

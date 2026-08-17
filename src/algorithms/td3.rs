@@ -120,7 +120,8 @@ impl TD3Agent {
             .collect::<Vec<_>>();
 
         let actor = NeuralNetwork::new(&actor_sizes, &actor_activations, optimizer.clone());
-        let actor_target = actor.clone();
+        // Target networks are only ever assigned to, so they hold no optimizer state
+        let actor_target = actor.clone_as_target();
 
         // Build critic networks (take state and action as input)
         let mut critic_sizes = vec![state_size + action_size];
@@ -134,8 +135,8 @@ impl TD3Agent {
 
         let critic1 = NeuralNetwork::new(&critic_sizes, &critic_activations, optimizer.clone());
         let critic2 = NeuralNetwork::new(&critic_sizes, &critic_activations, optimizer);
-        let critic1_target = critic1.clone();
-        let critic2_target = critic2.clone();
+        let critic1_target = critic1.clone_as_target();
+        let critic2_target = critic2.clone_as_target();
 
         TD3Agent {
             actor,
@@ -332,36 +333,19 @@ impl TD3Agent {
 
     /// Soft update target networks
     fn soft_update(&mut self) {
-        // Update actor target
-        for (target, source) in self.actor_target.layers.iter_mut().zip(self.actor.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
-
-        // Update critic1 target
-        for (target, source) in self.critic1_target.layers.iter_mut().zip(self.critic1.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
-
-        // Update critic2 target
-        for (target, source) in self.critic2_target.layers.iter_mut().zip(self.critic2.layers.iter()) {
-            target.weights = &target.weights * (1.0 - self.tau) + &source.weights * self.tau;
-            target.biases = &target.biases * (1.0 - self.tau) + &source.biases * self.tau;
-        }
+        self.actor_target.soft_update_from(&self.actor, self.tau);
+        self.critic1_target.soft_update_from(&self.critic1, self.tau);
+        self.critic2_target.soft_update_from(&self.critic2, self.tau);
     }
 
     /// Save agent to disk
     pub fn save(&self, path: &str) -> Result<()> {
-        let serialized = bincode::serialize(self)?;
-        std::fs::write(path, serialized)?;
-        Ok(())
+        crate::serialization::save_to_file(self, path)
     }
 
     /// Load agent from disk
     pub fn load(path: &str) -> Result<Self> {
-        let data = std::fs::read(path)?;
-        let mut agent: Self = bincode::deserialize(&data)?;
+        let mut agent: Self = crate::serialization::load_from_file(path)?;
         agent.rng = default_rng();
         Ok(agent)
     }
