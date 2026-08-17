@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::prelude::*;
 use rand_distr::Normal;
 use serde::{Deserialize, Serialize};
@@ -271,69 +271,57 @@ impl TD3Agent {
         let critic_loss = (&critic1_outputs - &critic1_targets).mapv(|x| x * x).mean().unwrap_or(0.0)
                         + (&critic2_outputs - &critic2_targets).mapv(|x| x * x).mean().unwrap_or(0.0);
 
-        // Actor update, delayed
+        // Actor update, delayed.
         //
-        // TD3 objective: maximize Q(s, μ(s))
+        // TD3 maximizes Q1(s, mu(s)), so the actor's loss is -Q1 and the gradient with
+        // respect to the actor's own output is -dQ1/da. That derivative comes from the
+        // critic via input_gradient_batch: the error signal travels back through the
+        // critic to reach the action, then into the actor.
         //
-        // We use a simple approach: move the actor output toward
-        // actions that result in high Q-values.
+        // The actor's output layer is tanh, so its outputs are in [-1, 1] and are mapped
+        // onto the action bounds by a linear scale. That scale is a constant factor on
+        // the gradient. The tanh derivative itself is applied by the actor's own backward
+        // pass, so it must not be applied here as well.
 
         self.update_counter += 1;
         let mut actor_loss = None;
 
         if self.update_counter % self.policy_delay == 0 {
             let actor_outputs = self.actor.forward_batch(states.view());
-            let mut actor_targets = actor_outputs.clone();
 
-            let mut policy_loss = 0.0;
+            let state_width = states.shape()[1];
+            let action_scale = 0.5 * (self.action_high - self.action_low);
+            let scaled_actions = actor_outputs.mapv(|a| (a + 1.0) * action_scale + self.action_low);
 
+            // Q1 for the actor's current actions, and the gradient of Q1 with respect to
+            // them. forward_batch has to run immediately before input_gradient_batch,
+            // which reads the pre-activations it caches.
+            let critic_input = concatenate_batch(states.view(), scaled_actions.view());
+            let q_values = self.critic1.forward_batch(critic_input.view());
+
+            let policy_loss = -q_values.mean().unwrap_or(0.0);
+            actor_loss = Some(policy_loss);
+
+            // d(-Q1)/dQ1 is -1 for every sample
+            let q_errors = Array2::from_elem((batch_size, 1), -1.0);
+            let input_grad = self.critic1.input_gradient_batch(q_errors.view());
+
+            // Keep the action half of the input gradient and carry the linear scale
+            let mut actor_errors = Array2::zeros((batch_size, self.action_size));
             for i in 0..batch_size {
-                let state = states.row(i);
-
-                // Get current action from actor (in [-1, 1] due to tanh)
-                let action = actor_outputs.row(i).to_owned();
-
-                // Scale to action bounds
-                let scaled_action = action.mapv(|a| {
-                    (a + 1.0) * 0.5 * (self.action_high - self.action_low) + self.action_low
-                });
-
-                // Compute Q-value for current action
-                let sa_concat = concatenate(state, scaled_action.view());
-                let q_value = self.critic1.forward(sa_concat.view())[0];
-                policy_loss -= q_value;
-
-                // Normalize Q-value as learning signal
-                let q_signal = (q_value / 10.0).clamp(-1.0, 1.0);
-
-                // For each action dimension, search for better actions
                 for j in 0..self.action_size {
-                    // Try action slightly higher and lower
-                    let delta = 0.1;
-                    let mut action_plus = scaled_action.clone();
-                    let mut action_minus = scaled_action.clone();
-                    action_plus[j] = (action_plus[j] + delta).clamp(self.action_low, self.action_high);
-                    action_minus[j] = (action_minus[j] - delta).clamp(self.action_low, self.action_high);
-
-                    let sa_plus = concatenate(state, action_plus.view());
-                    let sa_minus = concatenate(state, action_minus.view());
-                    let q_plus = self.critic1.forward(sa_plus.view())[0];
-                    let q_minus = self.critic1.forward(sa_minus.view())[0];
-
-                    // Move toward higher Q direction
-                    let direction = if q_plus > q_minus { 0.05 } else { -0.05 };
-
-                    // Update target: current output + direction weighted by Q
-                    let target = (action[j] + direction * (1.0 + q_signal.abs())).clamp(-1.0, 1.0);
-                    actor_targets[[i, j]] = target;
+                    let g = input_grad[[i, state_width + j]] * action_scale;
+                    actor_errors[[i, j]] = if g.is_finite() {
+                        g.clamp(-ACTOR_GRAD_CLIP, ACTOR_GRAD_CLIP)
+                    } else {
+                        0.0
+                    };
                 }
             }
 
-            policy_loss /= batch_size as f32;
-            actor_loss = Some(policy_loss);
-
-            // Train actor toward targets
-            self.actor.train_minibatch(states.view(), actor_targets.view(), actor_lr);
+            // forward_batch again so the actor's cached pre-activations match the inputs
+            // the error is about
+            self.actor.train_with_output_errors(states.view(), actor_errors.view(), actor_lr);
 
             // Soft update ALL target networks
             self.soft_update();
@@ -380,6 +368,27 @@ impl TD3Agent {
 }
 
 /// Concatenate state and action arrays
+/// Largest per-element gradient the actor will accept, so one bad critic reading cannot
+/// move the policy far.
+const ACTOR_GRAD_CLIP: f32 = 10.0;
+
+/// Concatenate a batch of states with a batch of actions, column-wise.
+fn concatenate_batch(states: ArrayView2<f32>, actions: ArrayView2<f32>) -> Array2<f32> {
+    let (batch_size, state_size) = states.dim();
+    let action_size = actions.shape()[1];
+
+    let mut out = Array2::zeros((batch_size, state_size + action_size));
+    for i in 0..batch_size {
+        for j in 0..state_size {
+            out[[i, j]] = states[[i, j]];
+        }
+        for j in 0..action_size {
+            out[[i, state_size + j]] = actions[[i, j]];
+        }
+    }
+    out
+}
+
 fn concatenate(state: ArrayView1<f32>, action: ArrayView1<f32>) -> Array1<f32> {
     let mut result = Array1::zeros(state.len() + action.len());
     result.slice_mut(ndarray::s![..state.len()]).assign(&state);
@@ -626,5 +635,51 @@ mod tests {
         let result = concatenate(state.view(), action.view());
 
         assert_eq!(result, Array1::from_vec(vec![1.0, 2.0, 3.0, 4.0]));
+    }
+
+    #[test]
+    fn the_actor_follows_the_critic() {
+        // Pin critic1 to Q(s, a) = a with a single linear layer, so the actor's best move
+        // is unambiguous: push the action up. If the gradient chain or its sign is wrong,
+        // the mean action falls instead.
+        let optimizer = OptimizerWrapper::Adam(crate::optimizer::Adam::new(&[], 0.9, 0.999, 1e-8));
+        let mut agent = TD3Agent::new(2, 1, &[8], optimizer, 0.99, 0.005, 1, -1.0, 1.0);
+        agent.set_seed(31);
+
+        // One linear layer over (state, action) reading only the action column
+        let mut pinned = NeuralNetwork::new(&[3, 1], &[Activation::Linear], OptimizerWrapper::SGD(crate::optimizer::SGD::new()));
+        pinned.layers[0].weights.fill(0.0);
+        pinned.layers[0].weights[[2, 0]] = 1.0;
+        pinned.layers[0].biases.fill(0.0);
+        agent.critic1 = pinned.clone();
+        agent.critic1_target = pinned;
+
+        let state = Array1::from_vec(vec![0.3, -0.4]);
+        let before = agent.act(state.view(), false).unwrap()[0];
+
+        let batch: Vec<TD3Experience> = (0..16)
+            .map(|_| TD3Experience {
+                state: state.clone(),
+                action: Array1::from_vec(vec![0.0]),
+                reward: 0.0,
+                next_state: state.clone(),
+                done: true,
+            })
+            .collect();
+
+        for _ in 0..60 {
+            // Restore the pinned critic each step so critic training cannot move it
+            let saved = agent.critic1.clone();
+            agent.update(&batch, 0.01, 0.0).unwrap();
+            agent.critic1 = saved;
+        }
+
+        let after = agent.act(state.view(), false).unwrap()[0];
+        assert!(
+            after > before + 0.05,
+            "actor should climb the critic: {} -> {}",
+            before,
+            after
+        );
     }
 }
