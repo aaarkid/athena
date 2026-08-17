@@ -6,12 +6,6 @@
 //! - Performance comparison between CPU and GPU
 //! - Scaling behavior with different network and batch sizes
 
-use athena::network::NeuralNetwork;
-use athena::activations::Activation;
-use athena::optimizer::{OptimizerWrapper, SGD};
-use ndarray::{Array2};
-use std::time::Instant;
-use std::sync::Arc;
 
 #[cfg(feature = "gpu")]
 use athena::gpu::{GpuBackend, ComputeBackend, GpuOptimizedNetwork};

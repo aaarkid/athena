@@ -1,7 +1,5 @@
 //! Simple GPU acceleration example that directly uses the GPU backend
 
-use ndarray::Array2;
-use std::time::Instant;
 
 #[cfg(feature = "gpu")]
 use athena::gpu::{GpuBackend, ComputeBackend};
