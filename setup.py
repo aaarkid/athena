@@ -3,9 +3,11 @@ from setuptools_rust import Binding, RustExtension
 
 setup(
     name="athena-rl",
-    version="0.1.0",
-    description="High-performance reinforcement learning library written in Rust with Python bindings",
-    author="Athena Contributors",
+    version="0.2.0",
+    description="Deep learning and reinforcement learning library written in Rust, with Python bindings",
+    author="Arkid Kaleci",
+    url="https://github.com/aaarkid/athena",
+    license="MIT OR Apache-2.0",
     rust_extensions=[
         RustExtension(
             "athena_py",

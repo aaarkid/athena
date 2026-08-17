@@ -1,5 +1,5 @@
 """
-Athena - High-performance reinforcement learning library
+Athena - deep learning and reinforcement learning library
 
 This package provides Python bindings for the Athena RL library written in Rust.
 """
@@ -14,4 +14,4 @@ except ImportError as e:
         "pip install -e . or python setup.py develop"
     ) from e
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
