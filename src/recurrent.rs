@@ -32,7 +32,7 @@
 //! let loss = model.train_batch(inputs.view(), targets.view(), 0.01);
 //! ```
 
-use ndarray::{Array2, Array3, ArrayView2, ArrayView3, Axis};
+use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, ArrayView3, Axis};
 
 use crate::activations::Activation;
 use crate::layers::{GRULayer, LSTMLayer};
@@ -77,6 +77,14 @@ impl RecurrentCell {
         match self {
             RecurrentCell::Lstm(layer) => layer.reset_states(),
             RecurrentCell::Gru(layer) => layer.reset_state(),
+        }
+    }
+
+    /// Advance one time step, carrying the state forward and writing no BPTT cache.
+    fn forward_step(&mut self, input: ArrayView2<f32>) -> Array2<f32> {
+        match self {
+            RecurrentCell::Lstm(layer) => layer.forward_step(input),
+            RecurrentCell::Gru(layer) => layer.forward_step(input),
         }
     }
 
@@ -160,13 +168,50 @@ impl RecurrentNetwork {
         // the cell's final hidden state. Read it before training the head, so the
         // cached pre-activations still belong to this forward pass.
         let hidden_grad = self.head.input_gradient_batch(output_errors.view());
-        self.head.train_minibatch(hidden.view(), targets, learning_rate);
+        // The forward pass above already wrote the head's caches, so the error goes
+        // straight back through them
+        self.head.apply_output_errors(output_errors.view(), learning_rate);
 
         // The cell returned only the last step, so its gradient has one step too
         let cell_grad = hidden_grad.insert_axis(Axis(1));
         self.cell.backward_and_apply(cell_grad.view(), learning_rate);
 
         loss
+    }
+
+    /// Advance one time step and read the head, carrying the cell state forward.
+    ///
+    /// This is the per-frame entry point. `forward_batch` resets the cell and reads a
+    /// whole sequence, so using it every frame means re-feeding the entire history.
+    /// Call `reset` at an episode boundary.
+    ///
+    /// No BPTT cache is written, so training still goes through `train_batch`.
+    pub fn step(&mut self, observation: ArrayView1<f32>) -> Array1<f32> {
+        let output = self.step_batch(observation.insert_axis(Axis(0)));
+        let width = output.shape()[1];
+        output
+            .into_shape((width,))
+            .expect("the head returned more than one row for one observation")
+    }
+
+    /// Batch form of `step`: one time step for each of several sequences at once.
+    pub fn step_batch(&mut self, observations: ArrayView2<f32>) -> Array2<f32> {
+        assert_eq!(
+            observations.shape()[1],
+            self.cell.input_size(),
+            "input width must match the cell's input size"
+        );
+
+        let hidden = self.cell.forward_step(observations);
+        self.head.predict_batch(hidden.view())
+    }
+
+    /// Clear the carried hidden state, at an episode boundary.
+    ///
+    /// `step` carries state from one call to the next; without this the first frame of a
+    /// new episode continues the previous one.
+    pub fn reset(&mut self) {
+        self.cell.reset();
     }
 
     /// Mean squared error on a batch, without updating anything.
