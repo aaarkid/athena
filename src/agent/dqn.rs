@@ -333,95 +333,95 @@ impl DqnAgent {
             dones.push(exp.done);
         }
         
-        // Get current Q-values
-        let current_q_values = self.q_network.forward_batch(states.view());
-        
-        // Calculate target Q-values
-        let mut target_q_values = current_q_values.clone();
-
         // Whether action a is legal in the next state. Without a mask every action
         // counts, which is what plain DQN assumes.
         let legal = |i: usize, a: usize| -> bool {
             next_masks.map(|masks| masks[i][a]).unwrap_or(true)
         };
-        
+
+        // The bootstrap passes read no gradients, so they go through predict_batch and
+        // leave the main network's caches free for the states pass below
+        let mut targets = vec![0.0f32; batch_size];
+
         if self.use_double_dqn {
             // Double DQN: use main network to select actions, target network to evaluate
-            let next_q_values_main = self.q_network.forward_batch(next_states.view());
-            let next_q_values_target = self.target_network.forward_batch(next_states.view());
-            
-            for i in 0..batch_size {
-                if !dones[i] {
-                    // Find best action using main network
-                    let best_action = next_q_values_main.row(i)
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| legal(i, *idx))
-                        .max_by(|(_, a), (_, b)| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(idx, _)| idx);
+            let next_q_values_main = self.q_network.predict_batch(next_states.view());
+            let next_q_values_target = self.target_network.predict_batch(next_states.view());
 
-                    // A next state with no legal action is terminal in all but name
-                    let target_value = match best_action {
-                        Some(a) => rewards[i] + gamma * next_q_values_target[[i, a]],
-                        None => rewards[i],
-                    };
-                    target_q_values[[i, actions[i]]] = target_value;
-                } else {
-                    target_q_values[[i, actions[i]]] = rewards[i];
+            for i in 0..batch_size {
+                if dones[i] {
+                    targets[i] = rewards[i];
+                    continue;
                 }
+
+                // Find best action using main network
+                let best_action = next_q_values_main.row(i)
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| legal(i, *idx))
+                    .max_by(|(_, a), (_, b)| {
+                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(idx, _)| idx);
+
+                // A next state with no legal action is terminal in all but name
+                targets[i] = match best_action {
+                    Some(a) => rewards[i] + gamma * next_q_values_target[[i, a]],
+                    None => rewards[i],
+                };
             }
         } else {
             // Standard DQN: use target network for both selection and evaluation
-            let next_q_values = self.target_network.forward_batch(next_states.view());
-            
+            let next_q_values = self.target_network.predict_batch(next_states.view());
+
             for i in 0..batch_size {
-                if !dones[i] {
-                    let max_next_q = next_q_values.row(i).iter()
-                        .enumerate()
-                        .filter(|(idx, _)| legal(i, *idx))
-                        .map(|(_, &val)| val)
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    let target_value = if max_next_q.is_finite() {
-                        rewards[i] + gamma * max_next_q
-                    } else {
-                        rewards[i]
-                    };
-                    target_q_values[[i, actions[i]]] = target_value;
-                } else {
-                    target_q_values[[i, actions[i]]] = rewards[i];
+                if dones[i] {
+                    targets[i] = rewards[i];
+                    continue;
                 }
+
+                let max_next_q = next_q_values.row(i).iter()
+                    .enumerate()
+                    .filter(|(idx, _)| legal(i, *idx))
+                    .map(|(_, &val)| val)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                targets[i] = if max_next_q.is_finite() {
+                    rewards[i] + gamma * max_next_q
+                } else {
+                    rewards[i]
+                };
             }
         }
-        
-        // The target differs from the prediction on the taken action only, so the TD
-        // error is that one entry's difference
+
+        // The only forward pass that has to leave caches behind, so that the error below
+        // can be backpropagated without repeating it
+        let current_q_values = self.q_network.forward_batch(states.view());
+
+        // The target differs from the prediction on the taken action only, so the error
+        // matrix is zero on every other column and the TD error is that one difference.
+        // Importance-sampling weights scale each sample's contribution to the update but
+        // not the TD error the caller gets back for its priorities.
+        let mut output_errors = Array2::zeros((batch_size, num_actions));
         let mut td_errors = Vec::with_capacity(batch_size);
+        let mut squared_error = 0.0f32;
+
         for i in 0..batch_size {
             let a = actions[i];
-            td_errors.push((target_q_values[[i, a]] - current_q_values[[i, a]]).abs());
+            let td = targets[i] - current_q_values[[i, a]];
+            td_errors.push(td.abs());
+            squared_error += td * td;
+
+            let weight = weights.map(|w| w[i]).unwrap_or(1.0);
+            output_errors[[i, a]] = -weight * td;
         }
 
-        // Importance-sampling weights scale each sample's contribution. Shrinking the
-        // target toward the prediction is the same as scaling that sample's error.
-        if let Some(weights) = weights {
-            for i in 0..batch_size {
-                let a = actions[i];
-                let current = current_q_values[[i, a]];
-                let td = target_q_values[[i, a]] - current;
-                target_q_values[[i, a]] = current + weights[i] * td;
-            }
-        }
+        // Mean squared TD error over the batch, measured before the update. The old
+        // figure averaged over batch_size * num_actions although only one column per row
+        // is ever non-zero, so it read num_actions times too small.
+        let loss = squared_error / batch_size as f32;
 
-        // Train the network
-        self.q_network.train_minibatch(states.view(), target_q_values.view(), learning_rate);
-        
-        // Calculate loss for monitoring
-        let predictions = self.q_network.forward_batch(states.view());
-        let loss = (&predictions - &target_q_values).mapv(|x| x * x).mean()
-            .unwrap_or(f32::INFINITY);
-        
+        self.q_network.apply_output_errors(output_errors.view(), learning_rate);
+
         // Increment train steps
         self.train_steps += 1;
         

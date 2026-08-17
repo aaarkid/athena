@@ -206,3 +206,70 @@ fn test_builder_error_handling() {
     
     assert!(result.is_err());
 }
+#[test]
+fn the_reported_loss_is_the_mean_squared_td_error_before_the_update() {
+    // The loss used to be measured after the update and averaged over every action
+    // column, so it read num_actions times too small and described a network that no
+    // longer existed. It is now the pre-update mean over the batch.
+    let mut agent = DqnAgent::new(&[3, 8, 4], 0.0, OptimizerWrapper::SGD(SGD::new()), 1_000_000, false);
+
+    let experiences = vec![
+        Experience {
+            state: array![1.0, 0.0, 0.0],
+            action: 2,
+            reward: 1.0,
+            next_state: array![0.0, 1.0, 0.0],
+            done: true,
+        },
+        Experience {
+            state: array![0.0, 0.0, 1.0],
+            action: 0,
+            reward: -0.5,
+            next_state: array![0.0, 1.0, 0.0],
+            done: true,
+        },
+    ];
+    let batch: Vec<&Experience> = experiences.iter().collect();
+
+    // Both transitions terminate, so the target is the reward and needs no bootstrap
+    let expected: f32 = experiences
+        .iter()
+        .map(|e| {
+            let q = agent.q_network.predict(e.state.view());
+            let td = e.reward - q[e.action];
+            td * td
+        })
+        .sum::<f32>()
+        / experiences.len() as f32;
+
+    let reported = agent.train_on_batch(&batch, 0.99, 0.0).unwrap();
+    assert!(
+        (reported - expected).abs() < 1e-5,
+        "reported {} against hand-computed {}",
+        reported,
+        expected
+    );
+}
+
+#[test]
+fn training_leaves_the_q_network_ready_for_another_batch() {
+    // train_on_batch now backpropagates through the caches its own forward pass wrote
+    // rather than forwarding again. Two batches in a row must still work.
+    let mut agent = DqnAgent::new(&[3, 8, 4], 0.0, OptimizerWrapper::SGD(SGD::new()), 2, true);
+
+    let experiences: Vec<Experience> = (0..6)
+        .map(|i| Experience {
+            state: array![i as f32 * 0.1, 1.0, -0.5],
+            action: i % 4,
+            reward: 0.5,
+            next_state: array![0.2, 0.3, 0.4],
+            done: i % 3 == 0,
+        })
+        .collect();
+
+    for _ in 0..5 {
+        let batch: Vec<&Experience> = experiences.iter().collect();
+        let loss = agent.train_on_batch(&batch, 0.99, 0.01).unwrap();
+        assert!(loss.is_finite(), "loss went non-finite: {}", loss);
+    }
+}

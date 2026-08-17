@@ -319,11 +319,37 @@ impl NeuralNetwork {
         output_errors: ArrayView2<f32>,
         learning_rate: f32,
     ) {
-        let outputs = self.forward_batch(inputs);
-        // train_minibatch computes outputs - targets, so this makes that difference
-        // exactly the error that was asked for
-        let targets = &outputs - &output_errors.to_owned();
-        self.train_minibatch(inputs, targets.view(), learning_rate);
+        let _ = self.forward_batch(inputs);
+        self.apply_output_errors(output_errors, learning_rate);
+    }
+
+    /// Backpropagate an error signal through the caches the last forward pass wrote,
+    /// and let the optimizer apply the result.
+    ///
+    /// Carries the same contract as `input_gradient_batch`: `forward_batch` must have run
+    /// on the inputs this error belongs to, immediately before, since the backward pass
+    /// reads the cached pre-activations. Calling it without that panics.
+    ///
+    /// This is what a caller already holding the outputs should use. `train_minibatch`
+    /// and the rest are this method with a forward pass in front.
+    pub fn apply_output_errors(&mut self, output_errors: ArrayView2<f32>, learning_rate: f32) {
+        let gradients = self.backward_batch(output_errors);
+        self.apply_gradients(gradients, learning_rate);
+    }
+
+    /// `apply_output_errors` with the global gradient norm capped at `max_norm`.
+    ///
+    /// Returns the gradient norm before clipping.
+    pub fn apply_output_errors_clipped(
+        &mut self,
+        output_errors: ArrayView2<f32>,
+        learning_rate: f32,
+        max_norm: f32,
+    ) -> f32 {
+        let mut gradients = self.backward_batch(output_errors);
+        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
+        self.apply_gradients(gradients, learning_rate);
+        norm
     }
 
     /// Scale a set of gradients so their combined L2 norm is at most `max_norm`.
@@ -373,10 +399,7 @@ impl NeuralNetwork {
     ) -> f32 {
         let outputs = self.forward_batch(inputs);
         let output_errors = &outputs - &targets;
-        let mut gradients = self.backward_batch(output_errors.view());
-        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
-        self.apply_gradients(gradients, learning_rate);
-        norm
+        self.apply_output_errors_clipped(output_errors.view(), learning_rate, max_norm)
     }
 
     /// `train_policy_gradient` with the global gradient norm capped at `max_norm`.
@@ -390,10 +413,7 @@ impl NeuralNetwork {
         max_norm: f32,
     ) -> f32 {
         let _ = self.forward_batch(inputs);
-        let mut gradients = self.backward_batch(output_gradients);
-        let norm = Self::clip_gradient_norm(&mut gradients, max_norm);
-        self.apply_gradients(gradients, learning_rate);
-        norm
+        self.apply_output_errors_clipped(output_gradients, learning_rate, max_norm)
     }
 
     /// Train the neural network for a batch of input vectors and target outputs.
@@ -407,12 +427,7 @@ impl NeuralNetwork {
     ) {
         let outputs = self.forward_batch(inputs);
         let output_errors = &outputs - &targets;
-        let gradients = self.backward_batch(output_errors.view());
-    
-        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
-            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
-            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
-        }
+        self.apply_output_errors(output_errors.view(), learning_rate);
     }
 
     /// Train using policy gradient method.
@@ -432,18 +447,10 @@ impl NeuralNetwork {
         output_gradients: ArrayView2<f32>,
         learning_rate: f32,
     ) {
-        // Forward pass to cache activations
+        // Forward pass to cache activations, then backpropagate the given gradient
+        // directly instead of computing output - target like train_minibatch
         let _ = self.forward_batch(inputs);
-
-        // Backward pass using the provided gradients directly
-        // (instead of computing output - target like in train_minibatch)
-        let gradients = self.backward_batch(output_gradients);
-
-        // Apply gradients using optimizer
-        for (idx, (layer, (weight_gradients, bias_gradients))) in self.layers.iter_mut().zip(gradients).enumerate() {
-            self.optimizer.update_weights(idx, &mut layer.weights, &weight_gradients, learning_rate);
-            self.optimizer.update_biases(idx, &mut layer.biases, &bias_gradients, learning_rate);
-        }
+        self.apply_output_errors(output_gradients, learning_rate);
     }
 
     /// Save the neural network's state to a file.
