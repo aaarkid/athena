@@ -176,16 +176,17 @@ fn compute_single_gradients(
         let activation_deriv = layer.activation.derivative(&pre_activation);
         delta = delta * activation_deriv;
         
-        // Compute gradients
-        let w_grad = delta.clone().insert_axis(Axis(1)) * input.clone().insert_axis(Axis(0));
+        // Weights are stored as (input_size, output_size), so the outer product
+        // has to be input x delta, not the other way round
+        let w_grad = input.clone().insert_axis(Axis(1)) * delta.clone().insert_axis(Axis(0));
         let b_grad = delta.clone();
-        
+
         weight_grads.push(w_grad);
         bias_grads.push(b_grad);
-        
-        // Propagate error to previous layer
+
+        // Propagate error to previous layer: (in, out) . (out,) = (in,)
         if i > 0 {
-            delta = layer.weights.t().dot(&delta);
+            delta = layer.weights.dot(&delta);
         }
     }
     
@@ -317,7 +318,8 @@ impl ParallelAugmentation {
 impl Layer {
     /// Forward pass without activation (for gradient computation)
     pub fn forward_pre_activation(&self, input: ArrayView1<f32>) -> Array1<f32> {
-        self.weights.dot(&input) + &self.biases
+        // Weights are (input_size, output_size), so the input goes on the left
+        input.dot(&self.weights) + &self.biases
     }
 }
 
