@@ -280,7 +280,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut logger = TrainingLogger::new("logs/pendulum_sac.csv")?;
     
     // Create SAC agent
-    let optimizer = OptimizerWrapper::SGD(athena::optimizer::SGD::new());
+    // Adam, not SGD: Pendulum returns are around -1600, and plain SGD on a squared
+    // error of that magnitude diverges within a few thousand steps.
+    let optimizer = OptimizerWrapper::Adam(athena::optimizer::Adam::new(&[], 0.9, 0.999, 1e-8));
     
     let target_entropy = config.target_entropy.unwrap_or(-1.0); // -action_dim
     
