@@ -125,7 +125,9 @@ impl SelfPlayTrainer {
         while !env.is_terminal() {
             let active = env.active_agents();
             let mut actions = Vec::new();
-            
+            // Keep the raw indices around, the experiences need them rather than E::Action
+            let mut action_indices: HashMap<usize, usize> = HashMap::new();
+
             for &agent_id in &active {
                 let obs_array: ndarray::Array1<f32> = env.get_observation(agent_id).into();
                 let agent_idx = agent_indices[agent_id];
@@ -140,6 +142,7 @@ impl SelfPlayTrainer {
                 #[cfg(not(feature = "action-masking"))]
                 let action = agent.act(obs_array.view()).unwrap_or(0);
                 
+                action_indices.insert(agent_id, action);
                 actions.push((agent_id, E::Action::from(action)));
             }
             
@@ -154,14 +157,11 @@ impl SelfPlayTrainer {
                         .unwrap_or_else(|| observations[agent_id].clone())
                         .into();
                 
-                let _action = actions.iter()
-                    .find(|(id, _)| *id == agent_id)
-                    .map(|(_, act)| act)
-                    .unwrap();
-                
+                let action = action_indices.get(&agent_id).copied().unwrap_or(0);
+
                 episode_experiences[agent_id].push(Experience {
                     state: obs_array,
-                    action: 0, // TODO: properly convert action
+                    action,
                     reward: transition.rewards.get(&agent_id).copied().unwrap_or(0.0),
                     next_state: next_obs_array,
                     done: transition.done,
