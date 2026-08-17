@@ -86,6 +86,7 @@ pub mod loss;
 pub mod metrics;
 pub mod network;
 pub mod optimizer;
+pub mod recurrent;
 pub mod replay_buffer;
 pub mod types;
 pub mod visualization;
