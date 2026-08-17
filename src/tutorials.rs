@@ -448,8 +448,9 @@ pub mod performance {
     //! ### Data Parallel Training
     //!
     //! `examples/parallel_training.rs` prints the crossover on your machine. Measured
-    //! here, against the same cache-free path on one thread: 1.36x at batch 32, 1.92x at
-    //! 256, 7.63x at 2048.
+    //! here against one thread on the same path, the speedup ran from roughly 1.4x at
+    //! batch 32 to 8x or better at 2048, varying by a factor of two between runs with
+    //! machine load. Measure it rather than trusting a number from another box.
     //!
     //! ```rust
     //! use athena::parallel::ParallelNetwork;

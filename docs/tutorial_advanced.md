@@ -458,9 +458,10 @@ let pairs: Vec<_> = weight_grads.into_iter().zip(bias_grads).collect();
 network.apply_gradients(pairs, 0.01);
 ```
 
-`examples/parallel_training.rs` prints the crossover on your machine. Measured here,
-against the same cache-free path on one thread: 1.36x at batch 32, 1.92x at 256, 7.63x at
-2048.
+`examples/parallel_training.rs` prints the crossover on your machine. Measured here
+against the same cache-free path on one thread, the speedup ran from roughly 1.4x at batch
+32 to 8x or better at 2048, varying by a factor of two between runs depending on machine
+load. Measure it yourself rather than trusting a number from someone else's box.
 
 ## Where to go next
 
