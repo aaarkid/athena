@@ -1,7 +1,13 @@
-//! Parallel training example using rayon
-//! 
-//! This example demonstrates how to leverage multi-core processors
-//! for faster training using parallel computation techniques.
+//! Splitting training across CPU cores with rayon.
+//!
+//! Run with `cargo run --release --example parallel_training`.
+//!
+//! Two things are parallel here: collecting episodes from several environments at once,
+//! and computing the gradients for one large batch. Both read the network through
+//! `predict`, which takes `&self`, so there is one set of weights and no per-thread copy.
+//!
+//! The batch is 256 rows. Below roughly a hundred, rayon's handoff costs more than the
+//! work: the benchmark at the end prints the crossover on this machine.
 
 use athena::network::NeuralNetwork;
 use athena::activations::Activation;
@@ -79,9 +85,6 @@ fn main() {
         OptimizerWrapper::SGD(athena::optimizer::SGD::new())
     );
     
-    // Create parallel network for fast inference
-    let mut parallel_network = ParallelNetwork::from_network(&q_network, num_threads);
-    
     // Create parallel replay buffer
     let mut replay_buffer = ParallelReplayBuffer::new(10000);
     
@@ -101,23 +104,18 @@ fn main() {
     // Metrics tracking
     let mut metrics = MetricsTracker::new(3, 1000);
     
-    // Each worker needs its own copy of the network, forward passes take &mut self
-    let mut workers: Vec<NeuralNetwork> = (0..num_envs).map(|_| q_network.clone()).collect();
-
     println!("Starting parallel training with {} environments...\n", num_envs);
 
     for episode in 0..num_episodes {
         let episode_start = Instant::now();
 
-        // Refresh the workers from the network trained in the previous episode
-        for worker in workers.iter_mut() {
-            *worker = q_network.clone();
-        }
-
-        // Collect one episode per environment, across threads
+        // Collect one episode per environment, across threads. Every thread reads the
+        // same network: predict takes &self and writes no caches, so there is nothing to
+        // clone and nothing to keep in sync.
+        let network_for_workers = &q_network;
         let experiences: Vec<Vec<Experience>> = envs.par_iter_mut()
-            .zip(workers.par_iter_mut())
-            .map(|(env, q_network)| {
+            .map(|env| {
+                let q_network = network_for_workers;
                 let mut episode_experiences = Vec::new();
                 let mut state = env.reset();
                 let mut _total_reward = 0.0;
@@ -127,7 +125,7 @@ fn main() {
                     let action = if rand::random::<f32>() < epsilon {
                         rand::random::<usize>() % 2
                     } else {
-                        let q_values = q_network.forward(state.view());
+                        let q_values = q_network.predict(state.view());
                         let mut max_idx = 0;
                         let mut max_val = q_values[0];
                         for (i, &val) in q_values.iter().enumerate().skip(1) {
@@ -191,15 +189,15 @@ fn main() {
                 dones.push(exp.done);
             }
             
-            // Parallel forward pass for next Q-values
+            // Both passes are inference, so both go through the parallel forward path
+            let parallel_network = ParallelNetwork::from_network(&q_network, num_threads);
             let next_q_values = parallel_network.forward_batch_parallel(next_states.view());
-            
-            // Compute targets
-            let mut targets = Array2::zeros((batch_size, 2));
+            let current_q_values = parallel_network.forward_batch_parallel(states.view());
+
+            // The target matches the prediction on every action except the one taken,
+            // so only that column carries an error
+            let mut targets = current_q_values.clone();
             for i in 0..batch_size {
-                let current_q = q_network.forward(states.row(i));
-                targets.row_mut(i).assign(&current_q);
-                
                 let max_next_q = next_q_values.row(i).fold(f32::NEG_INFINITY, |a, &b| a.max(b));
                 let target_value = if dones[i] {
                     rewards[i]
@@ -217,26 +215,10 @@ fn main() {
                 targets.view()
             );
             
-            // Update network weights
-            let mut updated_network = q_network.clone();
-            for (layer_idx, (layer, (w_grad, b_grad))) in updated_network.layers.iter_mut()
-                .zip(weight_grads.iter().zip(bias_grads.iter()))
-                .enumerate()
-            {
-                use athena::optimizer::Optimizer;
-                updated_network.optimizer.update_weights(
-                    layer_idx,
-                    &mut layer.weights,
-                    w_grad,
-                    0.001 // learning rate
-                );
-                updated_network.optimizer.update_biases(
-                    layer_idx,
-                    &mut layer.biases,
-                    b_grad,
-                    0.001 // learning rate
-                );
-            }
+            // Apply them. The old version built an updated_network and then dropped it,
+            // so this loop never actually trained anything.
+            let pairs: Vec<_> = weight_grads.into_iter().zip(bias_grads).collect();
+            q_network.apply_gradients(pairs, 0.001);
             
             let train_time = train_start.elapsed();
             
@@ -260,24 +242,23 @@ fn main() {
     
     // Benchmark: Compare parallel vs sequential processing
     println!("\nBenchmarking parallel vs sequential processing...");
-    benchmark_parallel_vs_sequential(&mut q_network, &mut parallel_network);
+    benchmark_parallel_vs_sequential(&q_network, num_threads);
 }
 
-fn benchmark_parallel_vs_sequential(network: &mut NeuralNetwork, parallel_network: &mut ParallelNetwork) {
-    let batch_sizes = vec![32, 64, 128, 256, 512];
-    
+fn benchmark_parallel_vs_sequential(network: &NeuralNetwork, num_threads: usize) {
+    let parallel_network = ParallelNetwork::from_network(network, num_threads);
+    let batch_sizes = vec![32, 64, 128, 256, 512, 2048];
+
     println!("\nBatch Size | Sequential Time | Parallel Time | Speedup");
     println!("-----------|-----------------|---------------|--------");
     
     for &batch_size in &batch_sizes {
         let input = Array2::ones((batch_size, 4));
         
-        // Sequential timing
+        // Sequential timing, through the same cache-free path so the comparison is
+        // between one thread and several rather than between two different code paths
         let seq_start = Instant::now();
-        let mut seq_outputs = Vec::with_capacity(batch_size);
-        for row in input.axis_iter(ndarray::Axis(0)) {
-            seq_outputs.push(network.forward(row));
-        }
+        let _seq_outputs = network.predict_batch(input.view());
         let seq_time = seq_start.elapsed();
         
         // Parallel timing
@@ -300,4 +281,6 @@ fn benchmark_parallel_vs_sequential(network: &mut NeuralNetwork, parallel_networ
     let aug_time = aug_start.elapsed();
     
     println!("Augmented 16 images in {:?}", aug_time);
+
+    println!("\nA speedup below 1.0 means rayon's handoff cost more than the work.");
 }
